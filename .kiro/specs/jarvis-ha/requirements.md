@@ -706,23 +706,27 @@ As a user, I want to mark frequently-used entities as favourites for quick acces
 - THE SYSTEM SHALL support bulk-favourite operations (select multiple entities at once).
 - THE SYSTEM SHALL allow reordering favourite entities via drag-and-drop.
 
-### User Story 6.5: Entity Aliases for Offline Fallback
+### User Story 6.5: Entity Voice Shortcuts (Aliases)
 
-As a user, I want to optionally set custom voice names for entities so offline fallback matching works with my natural language.
+As a user, I want to add short voice-friendly names for entities with long or awkward HA names so that voice commands are natural and easy.
 
 **Acceptance Criteria:**
 
-- [ ] User can add one or more voice aliases per entity
-- [ ] Aliases ONLY used for local offline fallback matching (HA handles online matching via its own alias system)
-- [ ] Auto-suggest aliases based on HA friendly names (pre-filled, user can edit)
-- [ ] Bulk import: fetch all HA entity friendly names as initial aliases with one tap
+- [ ] User can add one or more voice shortcuts (aliases) per entity from the entity browser
+- [ ] Aliases are pushed to HA via `config/entity_registry/update` WebSocket call so the Conversation API understands them immediately
+- [ ] A local copy of aliases is kept for offline fallback matching
+- [ ] App displays existing HA aliases already configured on the server
+- [ ] "Sync aliases" pulls any aliases added via HA web UI into the local cache
+- [ ] Bulk import: fetch all HA entity friendly names as initial local aliases with one tap
 
 **Requirements (EARS):**
 
-- THE SYSTEM SHALL allow users to define custom voice aliases for offline fallback matching (multiple aliases per entity supported).
-- THE SYSTEM SHALL provide a "sync from HA" button that bulk-imports all entity friendly names as aliases.
-- WHEN matching voice commands offline, THE SYSTEM SHALL check aliases in addition to the entity's `friendly_name` attribute.
-- NOTE: Online voice matching is handled entirely by HA's Conversation API and its own alias/expose system — local aliases are only for offline fallback.
+- WHEN the user adds a voice shortcut for an entity, THE SYSTEM SHALL push the alias to HA via `config/entity_registry/update` (adding to the entity's aliases list) AND store a local copy for offline use.
+- WHEN connected to HA, THE SYSTEM SHALL fetch existing aliases from the entity registry and display them alongside the friendly name.
+- WHEN the user adds an alias, THE SYSTEM SHALL immediately make it available for voice commands via HA's Conversation API (no app restart or re-sync needed).
+- WHEN HA is unreachable, THE SYSTEM SHALL use the locally cached aliases for offline intent matching.
+- THE SYSTEM SHALL provide a "Sync from HA" button that refreshes local alias cache with the current server-side aliases.
+- THE SYSTEM SHALL NOT duplicate aliases — if an alias already exists on HA, it is not re-pushed.
 
 ---
 
@@ -1218,6 +1222,153 @@ As a deaf or hard-of-hearing user, I want all voice responses also displayed vis
 - THE SYSTEM SHALL provide haptic feedback (vibration) as an alternative confirmation mechanism, configurable in settings.
 - WHEN the wake word is detected, THE SYSTEM SHALL provide visual feedback (screen flash, icon animation) in addition to any audio indicator.
 - THE SYSTEM SHALL support a "visual only" mode where all audio feedback is replaced with on-screen text and haptic vibration.
+
+---
+
+## 14. Configuration & Preferences
+
+### User Story 14.1: Wake Word Configuration
+
+As a user, I want to configure wake word behaviour so it suits my environment and habits.
+
+**Acceptance Criteria:**
+
+- [ ] Select wake word model (bundled "Hey Jarvis" or imported custom TFLite models)
+- [ ] Sensitivity slider (0.0–1.0)
+- [ ] Confirmation sound selection (beep, chime, custom sound, vibration only, silent)
+- [ ] Cooldown period (ignore re-triggers for X seconds after activation, default 3s)
+- [ ] Quiet hours schedule (wake word disabled during specified times, e.g., 23:00–07:00)
+- [ ] Wake word while device locked (enable/disable)
+- [ ] Screen wake on detection (turn screen on when wake word detected while screen off)
+
+**Requirements (EARS):**
+
+- THE SYSTEM SHALL allow selection of the active wake word model from bundled and user-imported TFLite models.
+- THE SYSTEM SHALL provide a cooldown period setting (1–30 seconds) during which re-triggers are ignored after an activation.
+- WHEN quiet hours are configured AND the current time falls within the quiet window, THE SYSTEM SHALL disable wake word detection entirely (microphone released).
+- WHEN "wake word while locked" is enabled, THE SYSTEM SHALL continue listening even when the device is locked, and activate the voice UI on detection.
+- WHEN "screen wake on detection" is enabled AND the screen is off, THE SYSTEM SHALL wake the screen and display the listening UI upon wake word detection.
+
+### User Story 14.2: Voice Interaction Configuration
+
+As a user, I want to control how the voice interaction behaves so it matches my speaking style and environment.
+
+**Acceptance Criteria:**
+
+- [ ] Listening timeout — how long to wait for speech after activation (default 5s, range 3–15s)
+- [ ] Silence detection threshold — pause length before STT considers speech finished (default 1.5s, range 0.5–5s)
+- [ ] Continuous conversation mode — stay listening after response for follow-up commands
+- [ ] Response verbosity: full / brief / silent (visual only)
+- [ ] Haptic feedback on command success/failure
+
+**Requirements (EARS):**
+
+- WHEN the STT engine is activated and no speech is detected within the configured listening timeout, THE SYSTEM SHALL cancel listening and return to idle.
+- WHEN the user stops speaking for longer than the configured silence threshold, THE SYSTEM SHALL finalise STT and process the command.
+- WHEN continuous conversation mode is enabled AND a response is delivered, THE SYSTEM SHALL automatically re-activate STT listening for a follow-up command (timeout applies).
+- WHEN response verbosity is set to "brief", THE SYSTEM SHALL speak short confirmations only (e.g., "Done", "OK", "21 degrees").
+- WHEN response verbosity is set to "silent", THE SYSTEM SHALL suppress all TTS output and only display responses visually.
+- WHEN haptic feedback is enabled, THE SYSTEM SHALL vibrate on successful command execution and with a different pattern on failure.
+
+### User Story 14.3: Audio Configuration
+
+As a user, I want to control how the assistant uses audio so it doesn't disrupt my media or disturb others.
+
+**Acceptance Criteria:**
+
+- [ ] TTS volume independent of media volume (uses Android notification/alarm stream or configurable)
+- [ ] Audio ducking — lower media volume while assistant is speaking, restore after
+- [ ] Audio output selection (speaker, Bluetooth, auto)
+- [ ] Quiet hours for TTS — suppress voice responses during specified times (visual only)
+- [ ] DND respect — honour Android Do Not Disturb mode
+
+**Requirements (EARS):**
+
+- WHEN audio ducking is enabled AND media is playing, THE SYSTEM SHALL request Android audio focus with AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK before speaking.
+- WHEN quiet hours for TTS are active, THE SYSTEM SHALL suppress all audio output and display responses visually with optional haptic feedback.
+- WHEN the device is in Do Not Disturb mode AND "respect DND" is enabled, THE SYSTEM SHALL suppress wake word detection AND audio responses.
+- THE SYSTEM SHALL allow the user to select TTS audio stream (notification, alarm, or media).
+
+### User Story 14.4: Security & Lock Screen Configuration
+
+As a user, I want to control what the assistant can do from the lock screen so convenience doesn't compromise security.
+
+**Acceptance Criteria:**
+
+- [ ] Wake word active while locked (configurable, default: on)
+- [ ] Restrict commands from lock screen to "safe" domains only (lights, sensors, media — not locks, alarms)
+- [ ] Configurable list of sensitive entity domains requiring unlock/biometric
+- [ ] Biometric grace period after unlock (default 30s, range 0–300s)
+- [ ] Voice PIN option for hands-free auth on sensitive commands
+
+**Requirements (EARS):**
+
+- WHEN the device is locked AND a command targets a sensitive entity domain, THE SYSTEM SHALL require device unlock or biometric authentication before execution.
+- THE SYSTEM SHALL classify `lock`, `alarm_control_panel`, and `cover` (garage doors) as sensitive by default, with user-configurable additions.
+- WHEN the device is locked AND the command targets a non-sensitive entity, THE SYSTEM SHALL execute normally without requiring unlock.
+- WHEN a voice PIN is configured, THE SYSTEM SHALL accept spoken PIN confirmation as an alternative to biometric/screen unlock for sensitive commands.
+- WHEN the biometric grace period is active (within configured seconds of last auth), THE SYSTEM SHALL execute sensitive commands without re-authentication.
+
+### User Story 14.5: Dashboard & UI Configuration
+
+As a user, I want to customise the app's appearance and behaviour.
+
+**Acceptance Criteria:**
+
+- [ ] Default view on launch (dashboard / voice / last used)
+- [ ] Auto-dismiss voice screen after X seconds of inactivity (default 10s)
+- [ ] Entity card density (compact / comfortable / detailed)
+- [ ] Theme (light / dark / system)
+- [ ] State update throttle for battery saving (max updates per second per entity)
+
+**Requirements (EARS):**
+
+- THE SYSTEM SHALL allow the user to select which screen appears on app launch.
+- WHEN the voice interaction screen is idle for longer than the configured auto-dismiss period, THE SYSTEM SHALL return to the dashboard.
+- THE SYSTEM SHALL support three entity card densities affecting how much information is shown per card.
+- THE SYSTEM SHALL allow throttling WebSocket state updates (e.g., max 1 update/sec/entity) to reduce battery usage on busy HA instances.
+
+### User Story 14.6: Network & Background Configuration
+
+As a user, I want to control background behaviour to balance responsiveness against battery life.
+
+**Acceptance Criteria:**
+
+- [ ] Home network detection method (SSID, subnet, try-local-first)
+- [ ] WebSocket keepalive interval (default 30s, range 10–120s)
+- [ ] Background connection mode: always on / WiFi only / charging only / disabled
+- [ ] Background data usage indication (show estimated monthly data)
+
+**Requirements (EARS):**
+
+- THE SYSTEM SHALL support three home-network detection methods: matching configured SSID, matching subnet, or probing the local URL first.
+- WHEN background connection mode is "WiFi only", THE SYSTEM SHALL disconnect WebSocket when on mobile data.
+- WHEN background connection mode is "charging only", THE SYSTEM SHALL disconnect WebSocket when not connected to a charger.
+- THE SYSTEM SHALL display estimated background data usage per month based on observed WebSocket traffic.
+
+---
+
+## 15. Platform Compatibility & Future APIs
+
+### User Story 15.1: Android 18+ System-Level Voice APIs
+
+As a developer, I want the app to take advantage of Android 18+ third-party voice assistant APIs (mandated by EU DMA ruling, August 2027) when available, while maintaining compatibility with older Android and degoogled ROMs.
+
+**Acceptance Criteria:**
+
+- [ ] App detects if Android 18+ system-level wake word API is available
+- [ ] If available, uses OS-level wake word registration instead of foreground service (better battery, no persistent notification)
+- [ ] If unavailable (older Android, degoogled ROM), falls back to foreground service approach
+- [ ] App detects NPU availability for model acceleration (STT/TTS)
+- [ ] Works identically on stock Android, LineageOS, GrapheneOS, CalyxOS, /e/OS
+
+**Requirements (EARS):**
+
+- WHEN running on Android 18+ with system-level voice assistant APIs available, THE SYSTEM SHALL use the OS-provided wake word registration for better battery efficiency and reliability.
+- WHEN system-level APIs are NOT available (Android <18 or custom ROM without the API), THE SYSTEM SHALL use the foreground service approach with `START_STICKY`.
+- THE SYSTEM SHALL detect hardware acceleration availability (NPU/DSP) and use it for on-device model inference when available.
+- THE SYSTEM SHALL NOT require any API that depends on Google Play Services or Google Mobile Services.
+- THE SYSTEM SHALL be tested and supported on: stock Android 8.0+, LineageOS 16+, GrapheneOS, CalyxOS, and /e/OS.
 
 ---
 

@@ -372,8 +372,27 @@ data class CachedArea(
 data class EntityAlias(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val entityId: String,
-    val alias: String
+    val alias: String,
+    val pushedToHa: Boolean = false  // tracks sync state
 )
+```
+
+#### Alias Management Flow
+
+```
+User taps "Add voice shortcut" on "Living Room End Light"
+User types "reading light"
+    │
+    ├─> App calls WebSocket: config/entity_registry/update
+    │   { entity_id: "light.living_room_end", aliases: [...existing, "reading light"] }
+    │   HA Conversation API now understands "reading light" immediately
+    │
+    └─> App stores alias locally (pushedToHa = true)
+        Used for offline fallback matching when HA unreachable
+
+On "Sync from HA":
+    ├─> Fetch entity registry with current aliases
+    └─> Update local cache to match server state
 ```
 
 #### Auto-Discovery Flow
