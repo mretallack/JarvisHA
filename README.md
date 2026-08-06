@@ -82,3 +82,7 @@ _Contribution guidelines will be added once the project structure is in place._
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Third-Party Models
+
+The app bundles [openWakeWord](https://github.com/dscripka/openWakeWord) models (Apache 2.0) for "Hey Jarvis" wake word detection. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for full attribution.

@@ -348,7 +348,13 @@ data class WakeWordDetection(
 )
 ```
 
-Uses LiteRT (TensorFlow Lite) to run the "Hey Jarvis" `.tflite` model. Audio is captured via Android's `AudioRecord` API at 16kHz mono, fed through the model in small frames.
+Uses LiteRT (TensorFlow Lite) to run the "Hey Jarvis" `.tflite` model. Audio is captured via Android's `AudioRecord` API at 16kHz mono, fed through the OpenWakeWord three-stage pipeline:
+
+1. `melspectrogram.tflite` — raw audio → mel spectrogram features
+2. `embedding_model.tflite` — mel features → compact audio embedding
+3. `hey_jarvis.tflite` — embedding → wake word confidence score
+
+All three models are bundled in the APK (~2.7MB total, Apache 2.0 licensed from [dscripka/openWakeWord](https://github.com/dscripka/openWakeWord)). No download needed for wake word functionality.
 
 ---
 
