@@ -1390,10 +1390,11 @@ As a developer, I want the app to take advantage of Android 18+ third-party voic
 
 ### Distribution
 
-- THE SYSTEM SHALL be distributable via F-Droid (meeting FOSS requirements, reproducible builds).
-- THE SYSTEM SHALL be installable via direct APK sideloading.
-- THE SYSTEM SHALL support automatic update checking (F-Droid repository or GitHub releases).
-- THE SYSTEM SHALL be licensed under a FOSS-compatible license (GPLv3 or Apache 2.0).
+- THE SYSTEM SHALL be distributable via F-Droid (meeting all inclusion policy requirements, zero anti-features).
+- THE SYSTEM SHALL be installable via direct APK sideloading (GitHub Releases).
+- THE SYSTEM SHALL NOT implement its own update checking mechanism (F-Droid handles updates; self-check would trigger Tracking anti-feature).
+- THE SYSTEM SHALL be licensed under MIT (FOSS-compatible, F-Droid accepted).
+- THE SYSTEM SHALL use reproducible builds so F-Droid can verify binary matches source.
 
 ### Battery & Resources
 
@@ -1415,3 +1416,186 @@ As a developer, I want the app to take advantage of Android 18+ third-party voic
 - THE SYSTEM SHALL be structured for i18n to support additional UI languages in future.
 - THE SYSTEM SHALL pass the user's configured language to HA's Conversation API.
 - THE SYSTEM SHALL support STT/TTS in any language for which models are available.
+
+---
+
+## 16. F-Droid Compliance
+
+### User Story 16.1: F-Droid Inclusion Policy Compliance
+
+As a developer, I want the app to meet all F-Droid inclusion requirements from day one so it can be accepted without rework.
+
+**Acceptance Criteria:**
+
+- [ ] All dependencies are FOSS-licensed (Apache 2.0, MIT, etc.)
+- [ ] No proprietary libraries (no Firebase, GMS, Crashlytics, proprietary ad/tracking SDKs)
+- [ ] No proprietary build tools required (builds with standard Gradle CLI)
+- [ ] Application ID follows reverse-domain convention owned by developer
+- [ ] Every release commit tagged with `vX.Y.Z` matching `versionName`
+- [ ] Fastlane metadata structure present in repo
+- [ ] No auto-update checking (F-Droid handles distribution)
+- [ ] No runtime binary downloads without explicit opt-in user consent
+- [ ] All assets (icons, sounds, images) under FOSS-compatible licenses
+- [ ] No tracking, analytics, or crash reporting to third parties
+
+**Requirements (EARS):**
+
+- THE SYSTEM SHALL have zero F-Droid anti-features (no Ads, Tracking, NonFreeNet, NonFreeDep, NonFreeAssets, TetheredNet).
+- THE SYSTEM SHALL only depend on libraries available from trusted Maven repositories (Maven Central, Google Maven, JitPack) with FOSS licenses.
+- THE SYSTEM SHALL NOT download executable code or binary models at runtime without explicit, informed, opt-in user consent presented before download begins.
+- THE SYSTEM SHALL bundle the default "Hey Jarvis" wake word model in the APK (no mandatory runtime download).
+- THE SYSTEM SHALL include fastlane metadata in the repository for F-Droid app listing.
+- WHEN the user optionally downloads additional STT/TTS models, THE SYSTEM SHALL clearly explain what is being downloaded, from where, and the file size before proceeding.
+
+### User Story 16.2: Reproducible Builds
+
+As a developer, I want builds to be bit-for-bit reproducible so F-Droid can verify the APK matches the source code.
+
+**Acceptance Criteria:**
+
+- [ ] Build output is deterministic (same source + same tools = identical APK)
+- [ ] No timestamps embedded in APK (build date, etc.)
+- [ ] All dependency versions pinned exactly (no dynamic/range versions)
+- [ ] Gradle build uses `--no-build-cache` for release builds
+- [ ] APK signing separate from build (F-Droid signs after verification)
+- [ ] Build environment documented and containerised
+- [ ] Reproducible build verified in CI (build twice, compare hashes)
+
+**Requirements (EARS):**
+
+- THE BUILD SYSTEM SHALL produce identical APK output given identical source code, dependencies, and build tools (deterministic build).
+- THE BUILD SYSTEM SHALL NOT embed timestamps, build paths, or machine-specific data in the output APK.
+- THE BUILD SYSTEM SHALL pin all dependency versions exactly (no `+`, `latest`, or range specifiers in build.gradle).
+- THE BUILD SYSTEM SHALL use a documented, containerised build environment (Docker) matching F-Droid's build server.
+- THE CI PIPELINE SHALL verify reproducibility by building twice and comparing output hashes.
+- THE BUILD SYSTEM SHALL support F-Droid's `Binaries:` metadata field for developer-signed reproducible verification.
+
+### User Story 16.3: Fastlane Metadata
+
+As a developer, I want app store metadata maintained in the repo so F-Droid and other stores can pull descriptions and screenshots automatically.
+
+**Acceptance Criteria:**
+
+- [ ] `fastlane/metadata/android/en-US/short_description.txt` (< 80 chars)
+- [ ] `fastlane/metadata/android/en-US/full_description.txt`
+- [ ] `fastlane/metadata/android/en-US/changelogs/<versionCode>.txt` (< 500 chars)
+- [ ] `fastlane/metadata/android/en-US/images/icon.png`
+- [ ] `fastlane/metadata/android/en-US/images/phoneScreenshots/` (at least 2)
+- [ ] Structure supports additional languages (e.g., `de-DE/`, `fr-FR/`)
+
+**Requirements (EARS):**
+
+- THE REPOSITORY SHALL contain fastlane metadata in `fastlane/metadata/android/en-US/` with short description, full description, icon, and at least 2 screenshots.
+- WHEN a new version is released, THE DEVELOPER SHALL add a changelog file at `fastlane/metadata/android/en-US/changelogs/<versionCode>.txt`.
+- THE METADATA STRUCTURE SHALL support localisation by adding locale directories alongside `en-US/`.
+
+---
+
+## 17. CI/CD & Testing
+
+### User Story 17.1: Continuous Integration Pipeline
+
+As a developer, I want automated CI that runs on every push and PR so code quality is maintained and regressions are caught early.
+
+**Acceptance Criteria:**
+
+- [ ] GitHub Actions workflow triggers on push to main and all PRs
+- [ ] Pipeline stages: lint → unit tests → integration tests → build APK → reproducibility check
+- [ ] All stages must pass before PR can be merged
+- [ ] Build artifacts (APK) uploaded for each successful build
+- [ ] Pipeline runs in a containerised environment matching the release build
+- [ ] Pipeline completes within 15 minutes for a typical change
+
+**Requirements (EARS):**
+
+- WHEN code is pushed to `main` or a pull request is opened/updated, THE CI PIPELINE SHALL run the full verification suite: lint, unit tests, integration tests, and release APK build.
+- THE CI PIPELINE SHALL block PR merging if any stage fails (branch protection rule).
+- THE CI PIPELINE SHALL upload the built APK as a GitHub Actions artifact on successful builds.
+- THE CI PIPELINE SHALL use a pinned Docker image or specific runner versions to ensure reproducibility.
+- THE CI PIPELINE SHALL complete all stages within 15 minutes on GitHub-hosted runners.
+
+### User Story 17.2: Unit Testing
+
+As a developer, I want comprehensive unit tests that run fast and verify individual components in isolation.
+
+**Acceptance Criteria:**
+
+- [ ] Unit tests for all ViewModels (state management, command processing)
+- [ ] Unit tests for all Repositories (data transformation, caching logic)
+- [ ] Unit tests for LocalIntentMatcher (fuzzy matching, entity resolution, command parsing)
+- [ ] Unit tests for export/import logic (serialisation round-trip, schema validation)
+- [ ] Unit tests for connection management (URL selection, reconnection logic)
+- [ ] Unit tests for voice pipeline orchestration (engine selection, fallback behaviour)
+- [ ] Mocked dependencies (no network, no database, no Android framework)
+- [ ] Code coverage target: 80%+ for domain and data layers
+- [ ] Tests run in < 2 minutes
+
+**Requirements (EARS):**
+
+- THE PROJECT SHALL maintain unit tests using JUnit5 + MockK covering all ViewModel, Repository, and Use Case classes.
+- THE UNIT TEST SUITE SHALL achieve a minimum of 80% line coverage on `domain/` and `data/` packages.
+- THE UNIT TEST SUITE SHALL run without any network access, database, or Android framework dependency (pure JVM tests).
+- THE UNIT TEST SUITE SHALL complete in under 2 minutes on CI runners.
+- WHEN a new feature is implemented, THE DEVELOPER SHALL add corresponding unit tests before or alongside the implementation.
+
+### User Story 17.3: Integration Testing
+
+As a developer, I want integration tests that verify components work together correctly without requiring a real HA instance.
+
+**Acceptance Criteria:**
+
+- [ ] Integration tests for HA WebSocket client (mock WebSocket server)
+- [ ] Integration tests for HA REST client (MockWebServer with recorded responses)
+- [ ] Integration tests for Room database (in-memory DB, entity cache CRUD, query correctness)
+- [ ] Integration tests for DataStore (settings persistence, migration)
+- [ ] Integration tests for export/import (full round-trip: export → file → import → verify state)
+- [ ] Integration tests for voice pipeline (mocked audio → STT → intent → TTS → verify output)
+- [ ] All integration tests run offline (no external network calls)
+- [ ] Tests run in < 5 minutes
+
+**Requirements (EARS):**
+
+- THE PROJECT SHALL maintain integration tests using JUnit5 + OkHttp MockWebServer for all HA API interactions.
+- THE INTEGRATION TEST SUITE SHALL verify WebSocket authentication, event subscription, and reconnection using a mock WebSocket server.
+- THE INTEGRATION TEST SUITE SHALL test Room database queries and migrations using an in-memory SQLite database.
+- THE INTEGRATION TEST SUITE SHALL verify the full export → serialise → deserialise → import round-trip produces identical configuration state.
+- THE INTEGRATION TEST SUITE SHALL run entirely offline with no external network dependencies.
+- THE INTEGRATION TEST SUITE SHALL complete in under 5 minutes on CI runners.
+
+### User Story 17.4: UI Testing
+
+As a developer, I want UI tests that verify critical user flows work correctly.
+
+**Acceptance Criteria:**
+
+- [ ] Compose UI tests for setup wizard flow
+- [ ] Compose UI tests for dashboard interaction (tap actions, state display)
+- [ ] Compose UI tests for settings screens (engine selection, export/import)
+- [ ] Compose UI tests for entity browser (search, filter, favourite)
+- [ ] Tests use Robolectric for fast execution without emulator
+- [ ] Tests run in < 5 minutes
+
+**Requirements (EARS):**
+
+- THE PROJECT SHALL maintain Compose UI tests using `createComposeRule()` + Robolectric for critical user flows.
+- THE UI TEST SUITE SHALL cover: setup wizard, dashboard interactions, settings configuration, and entity browser.
+- THE UI TEST SUITE SHALL run without an Android emulator (Robolectric).
+- THE UI TEST SUITE SHALL complete in under 5 minutes on CI runners.
+
+### User Story 17.5: Code Quality & Static Analysis
+
+As a developer, I want automated code quality checks so style and potential issues are caught before review.
+
+**Acceptance Criteria:**
+
+- [ ] Kotlin linter (ktlint or detekt) runs in CI
+- [ ] Android lint runs in CI (no errors allowed, warnings tracked)
+- [ ] Dependency vulnerability scanning (e.g., Gradle dependency-check)
+- [ ] All lint/quality checks must pass before merge
+
+**Requirements (EARS):**
+
+- THE CI PIPELINE SHALL run ktlint (or detekt) and reject PRs with formatting violations.
+- THE CI PIPELINE SHALL run Android lint and reject PRs that introduce new errors.
+- THE CI PIPELINE SHALL run dependency vulnerability scanning and warn on known CVEs.
+- THE CI PIPELINE SHALL enforce all quality gates via GitHub branch protection rules on `main`.

@@ -1,0 +1,25 @@
+JarvisHA is a voice-first Android app for controlling Home Assistant. Built for privacy, offline capability, and degoogled phones.
+
+Features:
+• "Hey Jarvis" wake word — always-on hands-free activation
+• Offline speech recognition (Sherpa-ONNX / Vosk)
+• Offline neural text-to-speech (Piper)
+• Full Home Assistant entity control — lights, media, climate, locks, vacuum, covers, sensors, and more
+• Live dashboard with real-time entity states via WebSocket
+• Area and floor-based voice commands
+• Favourites and quick-action buttons
+• Export/import configuration for backup and multi-device sync
+• Notifications from Home Assistant (no Firebase required)
+• Biometric authentication for sensitive operations
+• Home screen widgets
+
+Key Principles:
+• No Google Play Services required — works on LineageOS, GrapheneOS, CalyxOS
+• Privacy-first — all voice processing on-device, only connects to YOUR HA instance
+• Offline capable — wake word, STT, and TTS all work without internet
+• Easy setup — auto-discovers entities from HA, no manual mapping required
+• Uses HA's native Conversation API for intent processing
+
+Requirements:
+• Android 8.0+ (API 26)
+• Home Assistant instance with a long-lived access token

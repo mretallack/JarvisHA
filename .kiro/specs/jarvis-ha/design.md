@@ -708,16 +708,307 @@ Setup Wizard (first launch)
 
 ### 15. Testing Strategy
 
-| Level | Scope | Tools |
-|-------|-------|-------|
-| Unit | ViewModels, Use Cases, Repositories, Intent Matcher | JUnit5, MockK, Turbine |
-| Integration | HA Client (mock WebSocket), Room DB queries | JUnit5, OkHttp MockWebServer |
-| UI | Screen composables, navigation flows | Compose Testing, Robolectric |
-| E2E | Full voice pipeline with mocked audio | AndroidX Test, Espresso |
+#### Test Pyramid
 
-Key test areas:
-- Local intent matcher (fuzzy matching accuracy)
-- WebSocket reconnection logic
-- Export/import round-trip fidelity
-- Offline fallback behaviour
-- Entity cache consistency
+```
+         ┌───────────┐
+         │  UI Tests │  (~10%) Compose rules + Robolectric
+         ├───────────┤
+         │Integration│  (~30%) MockWebServer, in-memory Room, pipeline tests
+         ├───────────┤
+         │Unit Tests │  (~60%) Pure JVM, mocked deps, fast
+         └───────────┘
+```
+
+#### Test Levels
+
+| Level | Scope | Tools | Speed |
+|-------|-------|-------|-------|
+| Unit | ViewModels, Use Cases, Repositories, LocalIntentMatcher, Export/Import | JUnit5, MockK, Turbine (Flow testing) | < 2 min |
+| Integration | HA REST/WS client, Room DB, DataStore, voice pipeline, export round-trip | JUnit5, OkHttp MockWebServer, in-memory Room | < 5 min |
+| UI | Setup wizard, dashboard, settings, entity browser | Compose Testing (`createComposeRule`), Robolectric | < 5 min |
+| Total CI | All of the above + lint + build | GitHub Actions | < 15 min |
+
+#### Key Test Areas
+
+**LocalIntentMatcher (Unit):**
+```kotlin
+@Test
+fun `fuzzy matches entity name with typo`() {
+    val matcher = LocalIntentMatcher(entityCache)
+    val result = matcher.match("turn off the living rom light")
+    assertThat(result).isEqualTo(TurnOff("light.living_room"))
+}
+
+@Test
+fun `extracts numeric value for brightness`() {
+    val result = matcher.match("set bedroom to 50 percent")
+    assertThat(result).isEqualTo(SetValue("light.bedroom", 50))
+}
+```
+
+**HA WebSocket Client (Integration):**
+```kotlin
+@Test
+fun `authenticates and subscribes to state events`() = runTest {
+    mockWebServer.enqueue(authRequired())
+    mockWebServer.enqueue(authOk())
+    mockWebServer.enqueue(subscribeResult(id = 1))
+
+    client.connect()
+    client.authenticate("test-token")
+    client.subscribeEvents("state_changed")
+
+    // Verify auth message sent
+    val authMsg = mockWebServer.takeRequest()
+    assertThat(authMsg.body).contains("auth")
+}
+
+@Test
+fun `reconnects with exponential backoff on disconnect`() = runTest {
+    client.connect()
+    mockWebServer.shutdown()
+    
+    advanceTimeBy(1000) // 1s backoff
+    assertThat(client.connectionState.value).isEqualTo(Reconnecting(attempt = 1))
+    
+    advanceTimeBy(2000) // 2s backoff
+    assertThat(client.connectionState.value).isEqualTo(Reconnecting(attempt = 2))
+}
+```
+
+**Export/Import Round-Trip (Integration):**
+```kotlin
+@Test
+fun `export and reimport produces identical config`() = runTest {
+    // Setup state
+    configRepo.setLocalUrl("http://192.168.1.100:8123")
+    entityRepo.setFavourites(listOf("light.living_room"))
+    entityRepo.setAliases(mapOf("light.bedroom" to listOf("bedside light")))
+    
+    // Export
+    val exported = exporter.exportFull()
+    val json = exporter.serialiseToJson(exported)
+    
+    // Clear and reimport
+    configRepo.clearAll()
+    val validated = importer.validateJson(json)
+    assertThat(validated.isValid).isTrue()
+    importer.importReplace(validated.data)
+    
+    // Verify
+    assertThat(configRepo.getLocalUrl()).isEqualTo("http://192.168.1.100:8123")
+    assertThat(entityRepo.getFavourites()).containsExactly("light.living_room")
+}
+```
+
+**Voice Pipeline (Integration):**
+```kotlin
+@Test
+fun `falls back to local STT when primary unavailable`() = runTest {
+    primaryStt.setAvailable(false)
+    fallbackStt.setAvailable(true)
+    
+    voicePipeline.startListening()
+    
+    assertThat(voicePipeline.activeEngine.value).isEqualTo(fallbackStt)
+    // Verify user notified of fallback
+    assertThat(voicePipeline.events.first()).isInstanceOf(EngineFallback::class)
+}
+```
+
+#### Coverage Requirements
+
+| Package | Minimum Coverage |
+|---------|-----------------|
+| `domain/usecase/` | 90% |
+| `domain/model/` | 80% |
+| `data/ha/` | 80% |
+| `data/voice/` | 75% |
+| `data/export/` | 90% |
+| `data/db/` | 80% |
+| Overall | 80% |
+
+---
+
+### 16. CI/CD Pipeline (GitHub Actions)
+
+#### Pipeline Architecture
+
+```yaml
+# Triggered on: push to main, all PRs
+name: CI
+
+jobs:
+  lint:        # ktlint + Android lint
+  unit-test:   # JVM unit tests + coverage
+  integration: # Integration tests (MockWebServer, in-memory Room)
+  ui-test:     # Compose UI tests with Robolectric
+  build:       # Assemble release APK (unsigned)
+  reproducibility: # Build twice, compare SHA256
+```
+
+#### Pipeline Flow
+
+```
+Push / PR
+    │
+    ├─> [lint] ktlint check + Android lint
+    │       └─> Fail fast on errors
+    │
+    ├─> [unit-test] (parallel with lint)
+    │       ├─> ./gradlew testDebugUnitTest
+    │       ├─> Generate coverage report (JaCoCo)
+    │       └─> Fail if coverage < 80%
+    │
+    ├─> [integration-test] (parallel)
+    │       ├─> ./gradlew testDebugUnitTest --tests "*.integration.*"
+    │       └─> Or separate source set: integrationTest
+    │
+    ├─> [ui-test] (parallel)
+    │       └─> ./gradlew testDebugUnitTest --tests "*.ui.*"
+    │
+    └─> [build] (depends on: lint, unit-test, integration, ui-test)
+            ├─> ./gradlew assembleRelease (unsigned)
+            ├─> Upload APK artifact
+            └─> [reproducibility-check]
+                    ├─> Build again with clean gradle
+                    ├─> Compare SHA256 of both APKs
+                    └─> Fail if hashes differ
+```
+
+#### Branch Protection Rules
+
+- `main` branch protected:
+  - Require all CI checks to pass
+  - Require at least 1 review (when team grows)
+  - No direct push (PRs only)
+  - Linear history (squash merge)
+
+#### Release Flow
+
+```
+Tag vX.Y.Z on main
+    │
+    └─> [release] workflow triggered
+            ├─> Full CI suite
+            ├─> Build signed APK (using GitHub Secrets for keystore)
+            ├─> Verify reproducibility
+            ├─> Create GitHub Release with APK
+            └─> F-Droid auto-picks up tag via UpdateCheckMode
+```
+
+---
+
+### 17. Reproducible Build Configuration
+
+#### Gradle Configuration for Deterministic Builds
+
+```kotlin
+// build.gradle.kts (app)
+android {
+    buildTypes {
+        release {
+            // No timestamps in output
+            isMinifyEnabled = true
+            isShrinkResources = true
+        }
+    }
+    
+    packaging {
+        // Ensure consistent ordering
+        resources.excludes += setOf(
+            "META-INF/*.kotlin_module",
+            "META-INF/DEPENDENCIES",
+            "META-INF/LICENSE",
+            "META-INF/LICENSE.txt",
+            "META-INF/NOTICE",
+            "META-INF/NOTICE.txt"
+        )
+    }
+}
+
+// Force deterministic file ordering in APK
+tasks.withType<Zip>().configureEach {
+    isReproducibleFileOrder = true
+    isPreserveFileTimestamps = false
+}
+```
+
+#### Dependency Pinning
+
+```kotlin
+// All versions in libs.versions.toml (version catalog)
+// No dynamic versions (+, latest.release, [1.0,2.0))
+// Lock file: gradle/dependency-locks/
+
+// Verify in CI:
+// ./gradlew dependencies --write-locks
+// git diff --exit-code  (fail if lock files changed)
+```
+
+#### Docker Build Environment
+
+```dockerfile
+# Matches F-Droid build server environment
+FROM eclipse-temurin:17-jdk-jammy
+
+ENV ANDROID_SDK_ROOT=/opt/android-sdk
+ENV GRADLE_VERSION=8.7
+
+# Install exact Android SDK components
+RUN sdkmanager --install \
+    "platforms;android-34" \
+    "build-tools;34.0.0" \
+    "ndk;26.1.10909125"
+
+# Pin Gradle wrapper
+COPY gradle/wrapper/gradle-wrapper.properties /app/
+```
+
+#### Reproducibility Verification in CI
+
+```yaml
+reproducibility-check:
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@v4
+    - name: Build 1
+      run: ./gradlew clean assembleRelease
+    - name: Save hash 1
+      run: sha256sum app/build/outputs/apk/release/*.apk > hash1.txt
+    - name: Build 2
+      run: ./gradlew clean assembleRelease
+    - name: Compare hashes
+      run: |
+        sha256sum app/build/outputs/apk/release/*.apk > hash2.txt
+        diff hash1.txt hash2.txt || (echo "BUILD NOT REPRODUCIBLE" && exit 1)
+```
+
+#### F-Droid Metadata Integration
+
+```yaml
+# metadata/uk.co.jarvis.ha.yml (fdroiddata)
+Categories:
+  - Connectivity
+License: MIT
+AuthorName: Mark Retallack
+SourceCode: https://github.com/mretallack/JarvisHA
+IssueTracker: https://github.com/mretallack/JarvisHA/issues
+
+RepoType: git
+Repo: https://github.com/mretallack/JarvisHA.git
+
+Builds:
+  - versionName: 1.0.0
+    versionCode: 1
+    commit: v1.0.0
+    subdir: app
+    gradle:
+      - yes
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
+CurrentVersion: 1.0.0
+CurrentVersionCode: 1
+```

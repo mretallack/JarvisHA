@@ -1,0 +1,1 @@
+Voice-first Home Assistant control — offline, private, no Google required.
