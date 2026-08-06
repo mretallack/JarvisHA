@@ -27,6 +27,22 @@ JarvisHA is a standalone Android voice assistant designed exclusively for Home A
 - 🔒 Biometric auth for sensitive operations (locks, alarms)
 - 📱 Home screen widgets
 
+## Why Not Just Use the HA Companion App?
+
+The official Home Assistant Companion app has Assist support, but with a fundamentally different architecture:
+
+| | HA Companion App | JarvisHA |
+|---|---|---|
+| **STT** | Server-side (Whisper on your HA server) | **On-device** (Sherpa-ONNX/Vosk) |
+| **TTS** | Server-side (Piper on your HA server) | **On-device** (Piper via Sherpa-ONNX) |
+| **Wake word** | On-device (microWakeWord, experimental) | On-device (OpenWakeWord TFLite) |
+| **Requires Google Play** | Yes | No — F-Droid / APK |
+| **Offline voice** | Wake word only — commands need server | Full STT/TTS offline |
+| **Intent processing** | HA Conversation API | HA Conversation API (same, ~185ms) |
+| **Entity aliases** | HA web UI only | In-app: browse, add aliases, push to HA |
+
+**The key insight:** JarvisHA does STT and TTS on the phone, sending only lightweight text to HA's Conversation API (~185ms response). The Companion app streams audio to your server for Whisper processing, which is slower and requires a powerful HA server. Once Android 18+ exposes hardware-level wake word APIs (EU DMA, August 2027), the battery concern is solved too.
+
 ## Status
 
 **Early development** — currently in spec/design phase.

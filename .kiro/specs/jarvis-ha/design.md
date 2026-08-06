@@ -4,6 +4,17 @@
 
 JarvisHA is a native Android application built with Kotlin and Jetpack Compose that provides voice-first control of Home Assistant. The architecture prioritises offline capability, privacy, and zero Google dependency.
 
+### Validated Design Assumptions (August 2026)
+
+The following architectural decisions have been validated against a live HA instance:
+
+- **HA Conversation API** responds in ~185ms for intent processing (text in → result out). This is the only network call needed per voice command.
+- **Entity aliases** can be pushed programmatically via WebSocket `config/entity_registry/update`. The Conversation API immediately recognises new aliases with zero delay.
+- **On-device STT + Conversation API is faster than server-side Whisper.** The HA Companion app streams audio to the server for Whisper processing; even with text input, using Ollama as conversation agent took 55 seconds. The built-in HA agent takes 185ms.
+- **Default conversation agent matters.** The app should default to `conversation.home_assistant` (built-in, ~185ms) and allow optional selection of LLM agents (Ollama, etc.) with a latency warning.
+- **Entities must be exposed to Assist** in HA before the Conversation API can control them. The app should detect unexposed entities and guide users to expose them.
+- **Android 18+ (August 2027)** will provide hardware-level wake word APIs for third-party apps (EU DMA mandate), solving the battery drain issue of foreground-service-based wake word detection. Until then, the foreground service approach works on all devices including degoogled ROMs.
+
 ## Architecture Pattern
 
 **MVVM + Repository + Use Cases** with Hilt dependency injection.
