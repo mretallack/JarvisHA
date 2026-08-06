@@ -13,19 +13,19 @@ JarvisHA is a standalone Android voice assistant designed exclusively for Home A
 - **Easy setup** — auto-discovers entities from HA, no manual mapping required
 - **HA Conversation API** — uses HA's native intent system (supports built-in, LLM, custom agents)
 
-## Features (Planned)
+## Features (v1.0)
 
-- 🎙️ "Hey Jarvis" wake word (always-on background listening)
-- 🗣️ Offline speech recognition (Sherpa-ONNX / Vosk)
+- 🎙️ "Hey Jarvis" wake word (on-device, background listening with quiet hours)
+- 🗣️ Offline speech recognition (Sherpa-ONNX streaming)
 - 🔊 Offline neural TTS (Piper via Sherpa-ONNX)
-- 🏠 Full HA entity control (lights, media, climate, locks, vacuum, covers, sensors, and more)
-- 📊 Live dashboard with real-time entity states via WebSocket
-- 🗺️ Area and floor-based commands
-- ⭐ Favourites and quick-action buttons
+- 🏠 Voice control of all HA entities via Conversation API (~185ms response)
+- 💬 Chat-style conversation history with multi-turn support
+- ⭐ Entity browser with favourites and alias management
+- 🏷️ Add voice shortcuts — aliases pushed to HA for instant recognition
 - 📤 Export/import configuration for backup and multi-device sync
-- 🔔 Notifications from HA (no Firebase/FCM)
-- 🔒 Biometric auth for sensitive operations (locks, alarms)
-- 📱 Home screen widgets
+- 🔒 Biometric auth for sensitive operations (locks, alarms, covers)
+- 📱 Home screen mic-button widget
+- 🌙 Quiet hours (disable wake word on schedule)
 
 ## Why Not Just Use the HA Companion App?
 
@@ -61,7 +61,7 @@ See [`.kiro/specs/jarvis-ha/`](.kiro/specs/jarvis-ha/) for:
 | DI | Hilt |
 | Networking | OkHttp 5 (REST + WebSocket) |
 | Database | Room |
-| STT | Sherpa-ONNX / Vosk (offline) |
+| STT | Sherpa-ONNX (offline) |
 | TTS | Piper via Sherpa-ONNX / eSpeak-NG |
 | Wake Word | OpenWakeWord via LiteRT (TFLite) |
 

@@ -17,6 +17,49 @@ JarvisHA is an Android voice assistant application purpose-built for controlling
 
 ---
 
+## v1.0 Scope (MVP)
+
+### In Scope
+
+| Feature | Details |
+|---|---|
+| Connection setup | Single URL + token, test connection, setup wizard |
+| Voice command | Tap mic button or wake word → STT → HA Conversation API → TTS response |
+| STT | Sherpa-ONNX only (streaming zipformer), downloaded on first launch |
+| TTS | Piper via Sherpa-ONNX, downloaded on first launch. Speak on wake word activation only; text-only response on mic tap |
+| Wake word | "Hey Jarvis" TFLite model bundled, opt-in during setup with battery warning |
+| Quiet hours | Configurable schedule to disable wake word |
+| Entity discovery | Auto-discover all entities from HA, browseable |
+| Entity aliases | Add voice shortcuts in-app, push to HA via WebSocket, local cache for display |
+| Favourites | Star entities for quick reference |
+| Conversation history | Chat-style scrollable log of commands and responses |
+| Multi-turn | Support `conversation_id` for follow-up questions |
+| Export/import | Full JSON config export via SAF + share intent, import with merge/replace |
+| Lock screen | Voice works from lock screen; sensitive domains (lock, alarm, cover) require biometric |
+| Conversation agent | Default to `conversation.home_assistant`, configurable with latency warning |
+| Widget | Single mic-button home screen widget |
+| UI | Two tabs: Voice (chat) + Entities (browser). Tappable entity names in chat. |
+| Theme | Follow system (Material3), override in settings |
+| Language | English only |
+| Accessibility | Content descriptions, system font scaling, 48dp touch targets |
+| Package name | `uk.org.retallack.jarvis` |
+
+### Deferred (v1.1+)
+
+- Dashboard / entity state cards / tap-to-toggle controls
+- Notifications from HA
+- Offline fallback intent matching / command queue
+- Local + external URL auto-switching
+- Vosk STT engine (second option)
+- Multiple languages / model selection
+- Voice PIN for sensitive commands
+- Custom quick actions
+- Full accessibility polish (visual-only mode, switch access)
+- Android 18+ system-level wake word API integration
+- HA Wyoming Pipeline STT/TTS (server-side option)
+
+---
+
 ## 1. Connection & Authentication
 
 ### User Story 1.1: Initial Setup

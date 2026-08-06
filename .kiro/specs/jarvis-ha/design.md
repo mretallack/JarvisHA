@@ -15,6 +15,63 @@ The following architectural decisions have been validated against a live HA inst
 - **Entities must be exposed to Assist** in HA before the Conversation API can control them. The app should detect unexposed entities and guide users to expose them.
 - **Android 18+ (August 2027)** will provide hardware-level wake word APIs for third-party apps (EU DMA mandate), solving the battery drain issue of foreground-service-based wake word detection. Until then, the foreground service approach works on all devices including degoogled ROMs.
 
+### v1.0 Design Decisions
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| App purpose | Voice assistant only | Not a dashboard — Companion app handles visual control |
+| Package name | `uk.org.retallack.jarvis` | Developer-owned domain |
+| STT engine | Sherpa-ONNX (streaming zipformer) | Single library for STT + TTS, actively maintained |
+| TTS engine | Piper via Sherpa-ONNX | Same library, neural quality offline |
+| Wake word | OpenWakeWord TFLite ("Hey Jarvis" bundled) | Proven, ~2MB model |
+| Model delivery | Download from upstream on first launch | Small APK, F-Droid compliant with consent |
+| Connection | Single URL | External HTTPS fast enough (~185ms), simplifies v1.0 |
+| Conversation agent | Default `conversation.home_assistant` | 185ms vs 55s (Ollama), configurable in settings |
+| Intent processing | HA Conversation API only | No local matching — if HA is down, show error |
+| TTS behaviour | Speak on wake word activation only | Mic tap = text response (user is looking at screen) |
+| Multi-turn | Pass `conversation_id` when `continue_conversation: true` | Enables disambiguation |
+| UI structure | Two tabs: Voice (chat history) + Entities (browser) | Minimal, focused on voice |
+| Entity names in chat | Tappable → entity detail (alias/favourite) | Makes alias management discoverable |
+| Lock screen | All commands except sensitive domains | Biometric required for lock/alarm/cover |
+| Theme | Material3, follow system, override in settings | Minimal effort with Compose |
+| Language | English only | Single model download, add languages later |
+
+### v1.0 Screen Map (Simplified)
+
+```
+Setup Wizard (first launch only)
+    ├── Welcome
+    ├── HA Connection (URL + token + test)
+    ├── Download Models (STT + TTS, consent + progress)
+    ├── Wake Word (opt-in + battery warning)
+    ├── Quiet Hours (optional, if wake word enabled)
+    └── Done
+
+Main App (two tabs)
+    ├── Voice Tab (default)
+    │   ├── Chat history (scrollable)
+    │   ├── Live status indicator (listening/processing/speaking)
+    │   ├── FAB: mic button
+    │   └── Entity names tappable → entity detail
+    │
+    └── Entities Tab
+        ├── Search / filter
+        ├── Group by area / domain
+        └── Entity detail
+            ├── Friendly name + state
+            ├── Add voice shortcut (alias → push to HA)
+            └── Star as favourite
+
+Settings (gear icon)
+    ├── Connection (URL, token, test)
+    ├── Voice (STT model info, TTS voice)
+    ├── Wake Word (enable/disable, sensitivity, quiet hours)
+    ├── Conversation Agent (select, show latency)
+    ├── Security (sensitive domains, biometric)
+    ├── Export / Import
+    └── About
+```
+
 ## Architecture Pattern
 
 **MVVM + Repository + Use Cases** with Hilt dependency injection.
