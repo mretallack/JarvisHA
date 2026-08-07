@@ -8,18 +8,17 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.util.Log
 import androidx.core.content.ContextCompat
-import com.k2fsa.sherpa.onnx.EndpointConfig
-import com.k2fsa.sherpa.onnx.EndpointRule
 import com.k2fsa.sherpa.onnx.FeatureConfig
-import com.k2fsa.sherpa.onnx.OnlineModelConfig
-import com.k2fsa.sherpa.onnx.OnlineRecognizer
-import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
-import com.k2fsa.sherpa.onnx.OnlineStream
-import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
+import com.k2fsa.sherpa.onnx.OfflineModelConfig
+import com.k2fsa.sherpa.onnx.OfflineRecognizer
+import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
+import com.k2fsa.sherpa.onnx.OfflineWhisperModelConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -35,9 +34,10 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Sherpa-ONNX based STT engine for offline speech recognition.
- * Uses AudioRecord to capture audio and feeds it to the OnlineRecognizer
- * for streaming speech-to-text with endpoint detection.
+ * STT engine using Sherpa-ONNX Whisper (offline/non-streaming) model.
+ * Records audio, then processes it all at once for accurate transcription.
+ *
+ * Flow: tap mic → record audio → tap again (or silence) → process with Whisper → result
  */
 @Singleton
 class SherpaOnnxSttEngine @Inject constructor(
@@ -48,7 +48,9 @@ class SherpaOnnxSttEngine @Inject constructor(
         private const val TAG = "SherpaSTT"
         private const val SAMPLE_RATE = 16000
         private const val CHUNK_SIZE = 3200 // 200ms at 16kHz
-        private const val SILENCE_TIMEOUT_MS = 2000L // 2 seconds of no new text = done
+        private const val MAX_RECORDING_SECONDS = 30
+        private const val SILENCE_THRESHOLD = 500 // amplitude threshold for silence detection
+        private const val SILENCE_DURATION_MS = 2000L // 2 seconds of silence = stop
     }
 
     private val _state = MutableStateFlow(SttState.UNINITIALIZED)
@@ -57,11 +59,13 @@ class SherpaOnnxSttEngine @Inject constructor(
     private val _results = MutableSharedFlow<SttResult>(extraBufferCapacity = 16)
     override val results: Flow<SttResult> = _results
 
-    private var recognizer: OnlineRecognizer? = null
-    private var stream: OnlineStream? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var recognizer: OfflineRecognizer? = null
     private var audioRecord: AudioRecord? = null
     private var recordingJob: Job? = null
-    private val scope = CoroutineScope(Dispatchers.IO)
+
+    // Buffer to collect all audio samples during recording
+    private val audioBuffer = mutableListOf<FloatArray>()
 
     override suspend fun initialize(modelPath: String): Boolean {
         // Don't re-initialize if already ready or listening
@@ -75,11 +79,9 @@ class SherpaOnnxSttEngine @Inject constructor(
                 val modelDir = if (modelPath.isNotBlank()) {
                     modelPath
                 } else {
-                    // Default model directory
                     File(context.filesDir, "models/stt").absolutePath
                 }
 
-                // Check if model files exist
                 if (!isModelAvailable(modelDir)) {
                     Log.w(TAG, "Model files not found at $modelDir")
                     _state.value = SttState.ERROR
@@ -93,38 +95,33 @@ class SherpaOnnxSttEngine @Inject constructor(
                     return@withContext false
                 }
 
-                val config = OnlineRecognizerConfig(
+                val config = OfflineRecognizerConfig(
                     featConfig = FeatureConfig(
                         sampleRate = SAMPLE_RATE,
                         featureDim = 80,
                     ),
-                    modelConfig = OnlineModelConfig(
-                        transducer = OnlineTransducerModelConfig(
+                    modelConfig = OfflineModelConfig(
+                        whisper = OfflineWhisperModelConfig(
                             encoder = "$modelDir/encoder.onnx",
                             decoder = "$modelDir/decoder.onnx",
-                            joiner = "$modelDir/joiner.onnx",
+                            language = "en",
+                            task = "transcribe",
                         ),
                         tokens = "$modelDir/tokens.txt",
                         numThreads = 2,
                         debug = false,
                         provider = "cpu",
-                        modelType = "zipformer",
+                        modelType = "whisper",
                     ),
-                    endpointConfig = EndpointConfig(
-                        rule1 = EndpointRule(false, 2.4f, 0.0f),
-                        rule2 = EndpointRule(true, 1.2f, 0.0f),
-                        rule3 = EndpointRule(false, 0.0f, 20.0f),
-                    ),
-                    enableEndpoint = true,
                     decodingMethod = "greedy_search",
                 )
 
-                recognizer = OnlineRecognizer(config = config)
+                recognizer = OfflineRecognizer(config = config)
                 _state.value = SttState.READY
-                Log.i(TAG, "Sherpa-ONNX recognizer initialized from $modelDir")
+                Log.i(TAG, "Sherpa-ONNX Whisper recognizer initialized from $modelDir")
                 true
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to initialize Sherpa-ONNX", e)
+                Log.e(TAG, "Failed to initialize Sherpa-ONNX Whisper", e)
                 _state.value = SttState.ERROR
                 _results.tryEmit(
                     SttResult(
@@ -144,7 +141,6 @@ class SherpaOnnxSttEngine @Inject constructor(
             return
         }
 
-        // Check RECORD_AUDIO permission
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) {
@@ -156,32 +152,24 @@ class SherpaOnnxSttEngine @Inject constructor(
             return
         }
 
-        val rec = recognizer ?: run {
-            Log.e(TAG, "Recognizer not initialized")
-            _state.value = SttState.ERROR
-            return
-        }
-
         _state.value = SttState.LISTENING
+        audioBuffer.clear()
 
-        // Create a fresh stream for this recognition session
-        stream = rec.createStream()
-
-        // Start audio recording on IO dispatcher
+        // Start recording on IO dispatcher
         recordingJob = scope.launch {
-            captureAndRecognize(rec)
+            recordAudio()
         }
     }
 
     @Suppress("MissingPermission")
-    private suspend fun captureAndRecognize(rec: OnlineRecognizer) {
+    private suspend fun recordAudio() {
         val bufferSize = maxOf(
             AudioRecord.getMinBufferSize(
                 SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
             ),
-            CHUNK_SIZE * 2, // At least one chunk worth of buffer
+            CHUNK_SIZE * 2,
         )
 
         val record = AudioRecord(
@@ -203,27 +191,15 @@ class SherpaOnnxSttEngine @Inject constructor(
 
         audioRecord = record
         record.startRecording()
-        Log.d(TAG, "AudioRecord started, buffer size=$bufferSize")
+        Log.d(TAG, "AudioRecord started (Whisper mode), buffer size=$bufferSize")
 
         val shortBuffer = ShortArray(CHUNK_SIZE)
-        var lastTextChange = System.currentTimeMillis()
-        var lastText = ""
+        var totalSamples = 0
+        val maxSamples = SAMPLE_RATE * MAX_RECORDING_SECONDS
+        var silenceStart = 0L
+        var hasDetectedSpeech = false
 
         try {
-            val currentStream = stream ?: return
-
-            // Feed a pre-buffer of silence to warm up the recognizer
-            // This prevents the first word from being missed.
-            // We need ~300ms of silence (4800 samples at 16kHz) for the model to be ready.
-            val silenceFrames = 3 // Feed 3 chunks of silence (~600ms)
-            val silenceBuffer = FloatArray(CHUNK_SIZE) { 0.0f }
-            repeat(silenceFrames) {
-                currentStream.acceptWaveform(silenceBuffer, SAMPLE_RATE)
-                while (rec.isReady(currentStream)) {
-                    rec.decode(currentStream)
-                }
-            }
-
             while (currentCoroutineContext().isActive && _state.value == SttState.LISTENING) {
                 val shortsRead = record.read(shortBuffer, 0, CHUNK_SIZE)
                 if (shortsRead <= 0) {
@@ -231,169 +207,137 @@ class SherpaOnnxSttEngine @Inject constructor(
                     continue
                 }
 
-                // Convert short samples to float (sherpa-onnx expects float in [-1, 1])
+                // Convert to float and buffer
                 val floatSamples = FloatArray(shortsRead) { i ->
                     shortBuffer[i] / 32768.0f
                 }
+                audioBuffer.add(floatSamples)
+                totalSamples += shortsRead
 
-                // Feed audio to the stream
-                currentStream.acceptWaveform(floatSamples, SAMPLE_RATE)
-
-                // Decode while ready
-                while (rec.isReady(currentStream)) {
-                    rec.decode(currentStream)
-                }
-
-                // Get current result
-                val result = rec.getResult(currentStream)
-                val currentText = result.text.trim()
-
-                if (currentText.isNotEmpty()) {
-                    if (currentText != lastText) {
-                        lastText = currentText
-                        lastTextChange = System.currentTimeMillis()
-                        // Emit partial result
-                        _results.tryEmit(SttResult(text = currentText, isFinal = false))
-                    }
-
-                    // Check for endpoint (built-in VAD)
-                    if (rec.isEndpoint(currentStream)) {
-                        Log.d(TAG, "Endpoint detected, text: $currentText")
-                        // Emit final result
-                        _results.tryEmit(
-                            SttResult(text = currentText, isFinal = true, confidence = 1.0f),
-                        )
-                        // Reset for potential continuation
-                        rec.reset(currentStream)
-                        lastText = ""
-                        // Stop listening after endpoint
-                        _state.value = SttState.READY
+                // Check audio level for silence detection
+                val maxAmplitude = shortBuffer.take(shortsRead).maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+                if (maxAmplitude > SILENCE_THRESHOLD) {
+                    hasDetectedSpeech = true
+                    silenceStart = 0L
+                    // Emit a "recording" indicator as partial result
+                    val seconds = totalSamples / SAMPLE_RATE
+                    _results.tryEmit(SttResult(text = "Recording... ${seconds}s", isFinal = false))
+                } else if (hasDetectedSpeech) {
+                    // Silence after speech
+                    if (silenceStart == 0L) {
+                        silenceStart = System.currentTimeMillis()
+                    } else if (System.currentTimeMillis() - silenceStart > SILENCE_DURATION_MS) {
+                        Log.d(TAG, "Silence detected after speech, stopping recording")
                         break
                     }
-                } else {
-                    // No text yet, check silence timeout if we previously had text
-                    if (lastText.isNotEmpty()) {
-                        val silenceDuration = System.currentTimeMillis() - lastTextChange
-                        if (silenceDuration > SILENCE_TIMEOUT_MS) {
-                            Log.d(TAG, "Silence timeout, finalizing: $lastText")
-                            _results.tryEmit(
-                                SttResult(
-                                    text = lastText,
-                                    isFinal = true,
-                                    confidence = 1.0f,
-                                ),
-                            )
-                            _state.value = SttState.READY
-                            break
-                        }
-                    }
+                }
 
-                    // Only check endpoint if we've previously had text
-                    // Don't stop recording just because there's initial silence
-                    if (lastText.isNotEmpty() && rec.isEndpoint(currentStream)) {
-                        _results.tryEmit(
-                            SttResult(
-                                text = lastText,
-                                isFinal = true,
-                                confidence = 1.0f,
-                            ),
-                        )
-                        rec.reset(currentStream)
-                        lastText = ""
-                        _state.value = SttState.READY
-                        break
-                    } else if (lastText.isEmpty() && rec.isEndpoint(currentStream)) {
-                        // Silence endpoint with no text — just reset the stream, keep listening
-                        rec.reset(currentStream)
-                    }
+                // Max recording limit
+                if (totalSamples >= maxSamples) {
+                    Log.d(TAG, "Max recording time reached")
+                    break
                 }
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error during recognition", e)
-            if (lastText.isNotEmpty()) {
-                _results.tryEmit(SttResult(text = lastText, isFinal = true, confidence = 0.8f))
-            }
-            _state.value = SttState.ERROR
+        } catch (e: CancellationException) {
+            Log.d(TAG, "Recording cancelled")
         } finally {
             record.stop()
             record.release()
             audioRecord = null
-            Log.d(TAG, "AudioRecord stopped and released")
+            Log.d(TAG, "AudioRecord stopped. Total samples: $totalSamples (${totalSamples / SAMPLE_RATE}s)")
+        }
+
+        // Process the buffered audio with Whisper
+        if (audioBuffer.isNotEmpty() && hasDetectedSpeech) {
+            processBufferedAudio()
+        } else {
+            Log.d(TAG, "No speech detected in recording")
+            _state.value = SttState.READY
         }
     }
 
-    override suspend fun processAudio(samples: ShortArray) {
-        // Not used - this engine manages its own AudioRecord
-        // But support external audio feeding if needed
-        val currentStream = stream ?: return
-        val rec = recognizer ?: return
+    private suspend fun processBufferedAudio() {
+        _state.value = SttState.PROCESSING
+        _results.tryEmit(SttResult(text = "Processing...", isFinal = false))
 
-        val floatSamples = FloatArray(samples.size) { i ->
-            samples[i] / 32768.0f
-        }
-        currentStream.acceptWaveform(floatSamples, SAMPLE_RATE)
+        withContext(Dispatchers.IO) {
+            try {
+                val rec = recognizer ?: run {
+                    _state.value = SttState.ERROR
+                    return@withContext
+                }
 
-        while (rec.isReady(currentStream)) {
-            rec.decode(currentStream)
-        }
+                // Combine all audio chunks into one array
+                val totalSize = audioBuffer.sumOf { it.size }
+                val allSamples = FloatArray(totalSize)
+                var offset = 0
+                for (chunk in audioBuffer) {
+                    chunk.copyInto(allSamples, offset)
+                    offset += chunk.size
+                }
+                audioBuffer.clear()
 
-        val result = rec.getResult(currentStream)
-        if (result.text.isNotBlank()) {
-            _results.tryEmit(SttResult(text = result.text.trim(), isFinal = false))
+                Log.d(TAG, "Processing ${totalSize} samples (${totalSize / SAMPLE_RATE}s) with Whisper...")
+
+                // Create stream and process
+                val stream = rec.createStream()
+                stream.acceptWaveform(allSamples, SAMPLE_RATE)
+                rec.decode(stream)
+                val result = rec.getResult(stream)
+                val text = result.text.trim()
+
+                Log.d(TAG, "Whisper result: '$text'")
+
+                if (text.isNotEmpty()) {
+                    _results.tryEmit(SttResult(text = text, isFinal = true, confidence = 1.0f))
+                } else {
+                    _results.tryEmit(SttResult(text = "No speech detected", isFinal = true, confidence = 0f))
+                }
+
+                _state.value = SttState.READY
+            } catch (e: Exception) {
+                Log.e(TAG, "Whisper processing failed", e)
+                _state.value = SttState.ERROR
+                _results.tryEmit(
+                    SttResult(text = "Recognition failed: ${e.message}", isFinal = true, confidence = 0f),
+                )
+            }
         }
     }
 
     override suspend fun stopListening() {
         if (_state.value != SttState.LISTENING) return
-        Log.d(TAG, "stopListening called")
+        Log.d(TAG, "stopListening called - stopping recording and processing")
 
-        _state.value = SttState.PROCESSING
-
-        // Stop the recording job
+        // Cancel the recording job - this will trigger processBufferedAudio in the finally block
         recordingJob?.cancelAndJoin()
         recordingJob = null
 
-        // Get final result from stream
-        val currentStream = stream
-        val rec = recognizer
-        if (currentStream != null && rec != null) {
-            currentStream.inputFinished()
-
-            // Decode any remaining audio
-            while (rec.isReady(currentStream)) {
-                rec.decode(currentStream)
-            }
-
-            val result = rec.getResult(currentStream)
-            if (result.text.isNotBlank()) {
-                _results.tryEmit(
-                    SttResult(text = result.text.trim(), isFinal = true, confidence = 1.0f),
-                )
-            }
+        // Process whatever audio we captured
+        if (audioBuffer.isNotEmpty()) {
+            processBufferedAudio()
+        } else {
+            _state.value = SttState.READY
         }
+    }
 
-        stream = null
-        _state.value = SttState.READY
+    override suspend fun processAudio(samples: ShortArray) {
+        // Not used - this engine manages its own AudioRecord
     }
 
     override suspend fun release() {
         recordingJob?.cancelAndJoin()
         recordingJob = null
-        audioRecord?.stop()
-        audioRecord?.release()
-        audioRecord = null
-        stream?.release()
-        stream = null
-        recognizer?.release()
         recognizer = null
+        audioBuffer.clear()
         _state.value = SttState.UNINITIALIZED
-        Log.i(TAG, "Sherpa-ONNX engine released")
     }
 
     override fun isModelAvailable(modelPath: String): Boolean {
         val modelDir = File(modelPath)
         if (!modelDir.exists()) return false
-        val requiredFiles = listOf("encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt")
+        // Whisper needs: encoder.onnx, decoder.onnx, tokens.txt
+        val requiredFiles = listOf("encoder.onnx", "decoder.onnx", "tokens.txt")
         return requiredFiles.all { File(modelDir, it).exists() }
     }
 }
