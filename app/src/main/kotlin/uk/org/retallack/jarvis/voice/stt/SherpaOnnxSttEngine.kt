@@ -64,6 +64,12 @@ class SherpaOnnxSttEngine @Inject constructor(
     private val scope = CoroutineScope(Dispatchers.IO)
 
     override suspend fun initialize(modelPath: String): Boolean {
+        // Don't re-initialize if already ready or listening
+        if (_state.value == SttState.READY || _state.value == SttState.LISTENING) {
+            Log.d(TAG, "Already initialized, skipping re-init")
+            return true
+        }
+
         return withContext(Dispatchers.IO) {
             try {
                 val modelDir = if (modelPath.isNotBlank()) {

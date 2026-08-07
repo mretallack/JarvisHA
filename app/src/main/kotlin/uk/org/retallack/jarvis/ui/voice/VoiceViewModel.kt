@@ -210,6 +210,8 @@ class VoiceViewModel @Inject constructor(
     private fun stopListening() {
         viewModelScope.launch {
             sttEngine.stopListening()
+            // Always reset UI mode regardless of STT state
+            _mode.value = VoiceUiMode.IDLE
         }
     }
 
