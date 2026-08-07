@@ -227,11 +227,15 @@ class VoiceViewModel @Inject constructor(
 
     private fun processCommand(text: String) {
         viewModelScope.launch {
+            // Clean up Whisper output before sending to HA
+            val cleanedText = cleanSttOutput(text)
+            android.util.Log.d("JarvisVoice", "Processing command: '$cleanedText' (raw: '$text')")
+
             // Save user message
-            messageDao.insert(ConversationMessageDb(text = text, isUser = true))
+            messageDao.insert(ConversationMessageDb(text = cleanedText, isUser = true))
             _mode.value = VoiceUiMode.PROCESSING
 
-            val result = conversationRepository.processText(text)
+            val result = conversationRepository.processText(cleanedText)
 
             when (result) {
                 is ConversationResult.Success -> {
@@ -285,6 +289,22 @@ class VoiceViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    /**
+     * Clean up Whisper STT output for use as a voice command.
+     * Whisper tends to add punctuation, capitalize, and sometimes
+     * add artifacts that confuse HA's intent matching.
+     */
+    private fun cleanSttOutput(text: String): String {
+        return text
+            .trim()
+            .removeSuffix(".")
+            .removeSuffix(",")
+            .removeSuffix("!")
+            .removeSuffix("?")
+            .trim()
+            .lowercase()
     }
 
     fun clearHistory() {
