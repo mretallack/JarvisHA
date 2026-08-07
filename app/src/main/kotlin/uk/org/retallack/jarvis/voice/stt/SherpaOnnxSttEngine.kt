@@ -61,6 +61,7 @@ class SherpaOnnxSttEngine @Inject constructor(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var recognizer: OfflineRecognizer? = null
+    private var modelDir: String? = null
     private var audioRecord: AudioRecord? = null
     private var recordingJob: Job? = null
 
@@ -76,13 +77,13 @@ class SherpaOnnxSttEngine @Inject constructor(
 
         return withContext(Dispatchers.IO) {
             try {
-                val modelDir = if (modelPath.isNotBlank()) {
+                modelDir = if (modelPath.isNotBlank()) {
                     modelPath
                 } else {
                     File(context.filesDir, "models/stt").absolutePath
                 }
 
-                if (!isModelAvailable(modelDir)) {
+                if (!isModelAvailable(modelDir!!)) {
                     Log.w(TAG, "Model files not found at $modelDir")
                     _state.value = SttState.ERROR
                     _results.tryEmit(
@@ -95,30 +96,10 @@ class SherpaOnnxSttEngine @Inject constructor(
                     return@withContext false
                 }
 
-                val config = OfflineRecognizerConfig(
-                    featConfig = FeatureConfig(
-                        sampleRate = SAMPLE_RATE,
-                        featureDim = 80,
-                    ),
-                    modelConfig = OfflineModelConfig(
-                        whisper = OfflineWhisperModelConfig(
-                            encoder = "$modelDir/encoder.onnx",
-                            decoder = "$modelDir/decoder.onnx",
-                            language = "en",
-                            task = "transcribe",
-                        ),
-                        tokens = "$modelDir/tokens.txt",
-                        numThreads = 2,
-                        debug = false,
-                        provider = "cpu",
-                        modelType = "whisper",
-                    ),
-                    decodingMethod = "greedy_search",
-                )
-
-                recognizer = OfflineRecognizer(config = config)
+                // Don't load model yet — load on demand when startListening is called
+                // This saves ~90MB RAM when idle
                 _state.value = SttState.READY
-                Log.i(TAG, "Sherpa-ONNX Whisper recognizer initialized from $modelDir")
+                Log.i(TAG, "Sherpa-ONNX Whisper ready (model at $modelDir, will load on demand)")
                 true
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to initialize Sherpa-ONNX Whisper", e)
@@ -132,6 +113,38 @@ class SherpaOnnxSttEngine @Inject constructor(
                 )
                 false
             }
+        }
+    }
+
+    /** Load the Whisper model into memory (called on demand) */
+    private fun loadModel(): OfflineRecognizer? {
+        val dir = modelDir ?: return null
+        return try {
+            val config = OfflineRecognizerConfig(
+                featConfig = FeatureConfig(
+                    sampleRate = SAMPLE_RATE,
+                    featureDim = 80,
+                ),
+                modelConfig = OfflineModelConfig(
+                    whisper = OfflineWhisperModelConfig(
+                        encoder = "$dir/encoder.onnx",
+                        decoder = "$dir/decoder.onnx",
+                        language = "en",
+                        task = "transcribe",
+                    ),
+                    tokens = "$dir/tokens.txt",
+                    numThreads = 2,
+                    debug = false,
+                    provider = "cpu",
+                    modelType = "whisper",
+                ),
+                decodingMethod = "greedy_search",
+            )
+            Log.d(TAG, "Loading Whisper model into memory...")
+            OfflineRecognizer(config = config)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load Whisper model", e)
+            null
         }
     }
 
@@ -262,10 +275,16 @@ class SherpaOnnxSttEngine @Inject constructor(
 
         withContext(Dispatchers.IO) {
             try {
-                val rec = recognizer ?: run {
+                // Load model on demand
+                val rec = recognizer ?: loadModel()
+                if (rec == null) {
                     _state.value = SttState.ERROR
+                    _results.tryEmit(
+                        SttResult(text = "Failed to load speech model", isFinal = true, confidence = 0f),
+                    )
                     return@withContext
                 }
+                recognizer = rec
 
                 // Combine all audio chunks into one array
                 val totalSize = audioBuffer.sumOf { it.size }
@@ -294,9 +313,14 @@ class SherpaOnnxSttEngine @Inject constructor(
                     _results.tryEmit(SttResult(text = "No speech detected", isFinal = true, confidence = 0f))
                 }
 
+                // Release model from memory to prevent OOM when app is backgrounded
+                recognizer = null
+                Log.d(TAG, "Whisper model released from memory")
+
                 _state.value = SttState.READY
             } catch (e: Exception) {
                 Log.e(TAG, "Whisper processing failed", e)
+                recognizer = null
                 _state.value = SttState.ERROR
                 _results.tryEmit(
                     SttResult(text = "Recognition failed: ${e.message}", isFinal = true, confidence = 0f),

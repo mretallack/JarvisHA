@@ -41,6 +41,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.JarvisHA"
         android:enableOnBackInvokedCallback="true"
+        android:largeHeap="true"
         tools:targetApi="34">
 
         <activity
