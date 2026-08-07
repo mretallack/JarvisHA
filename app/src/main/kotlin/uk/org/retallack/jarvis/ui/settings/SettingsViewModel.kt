@@ -48,6 +48,7 @@ class SettingsViewModel @Inject constructor(
     private val sttEngine: SttEngine,
     private val ttsEngine: TtsEngine,
     private val conversationRepository: ConversationRepository,
+    private val modelManager: uk.org.retallack.jarvis.voice.ModelManager,
     private val themeRepository: ThemeRepository,
 ) : ViewModel() {
 
@@ -69,7 +70,7 @@ class SettingsViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(
                 isConnected = haClient.isConfigured,
                 haUrl = config?.url ?: "",
-                sttModelAvailable = sttEngine.isModelAvailable(""),
+                sttModelAvailable = modelManager.isSttModelAvailable(),
                 ttsModelAvailable = ttsEngine.isModelAvailable(""),
                 selectedAgentId = conversationRepository.getAgent(),
             )
