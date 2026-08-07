@@ -43,6 +43,8 @@ class VoiceViewModel @Inject constructor(
     private val sttEngine: SttEngine,
     private val ttsEngine: TtsEngine,
     private val messageDao: ConversationMessageDao,
+    private val connectionRepository: uk.org.retallack.jarvis.data.repository.ConnectionRepository,
+    private val haClient: uk.org.retallack.jarvis.data.ha.HaClient,
 ) : ViewModel() {
 
     private val _mode = MutableStateFlow(VoiceUiMode.IDLE)
@@ -74,8 +76,21 @@ class VoiceViewModel @Inject constructor(
     private var wakeWordTriggered = false
 
     init {
+        configureHaClient()
         initializeEngines()
         observeSttResults()
+    }
+
+    private fun configureHaClient() {
+        viewModelScope.launch {
+            val config = connectionRepository.getConnectionConfig()
+            if (config != null) {
+                haClient.configure(config.url, config.token)
+                android.util.Log.d("JarvisVoice", "HaClient configured with ${config.url}")
+            } else {
+                android.util.Log.w("JarvisVoice", "No HA connection config found")
+            }
+        }
     }
 
     private fun initializeEngines() {
