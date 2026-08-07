@@ -23,6 +23,7 @@ class EntityRepository @Inject constructor(
     private val aliasDao: AliasDao,
     private val haClient: HaClient,
     private val webSocketClient: HaWebSocketClient,
+    private val connectionRepository: ConnectionRepository,
 ) {
     val allEntities: Flow<List<HaEntityDb>> = entityDao.getAllEntities()
     val favourites: Flow<List<HaEntityDb>> = entityDao.getFavourites()
@@ -61,13 +62,29 @@ class EntityRepository @Inject constructor(
      * Push an alias to Home Assistant via WebSocket entity registry update.
      */
     suspend fun pushAliasToHa(entityId: String, aliases: List<String>) {
-        webSocketClient.sendCommand(
-            type = "config/entity_registry/update",
-            additionalData = mapOf(
-                "entity_id" to entityId,
-                "aliases" to aliases,
-            ),
-        )
+        try {
+            if (webSocketClient.connectionState.value != uk.org.retallack.jarvis.data.ha.WsConnectionState.CONNECTED) {
+                android.util.Log.w("EntityRepo", "WebSocket not connected, attempting to connect...")
+                // Try to connect if not already
+                val config = connectionRepository.getConnectionConfig()
+                if (config != null) {
+                    webSocketClient.configure(config.url, config.token)
+                    webSocketClient.connect()
+                    // Wait briefly for connection
+                    kotlinx.coroutines.delay(2000)
+                }
+            }
+            webSocketClient.sendCommand(
+                type = "config/entity_registry/update",
+                additionalData = mapOf(
+                    "entity_id" to entityId,
+                    "aliases" to aliases,
+                ),
+            )
+        } catch (e: Exception) {
+            android.util.Log.e("EntityRepo", "Failed to push alias to HA: ${e.message}")
+            throw e
+        }
     }
 
     /**

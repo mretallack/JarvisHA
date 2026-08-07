@@ -47,6 +47,7 @@ class VoiceViewModel @Inject constructor(
     private val messageDao: ConversationMessageDao,
     private val connectionRepository: uk.org.retallack.jarvis.data.repository.ConnectionRepository,
     private val haClient: uk.org.retallack.jarvis.data.ha.HaClient,
+    private val haWebSocketClient: uk.org.retallack.jarvis.data.ha.HaWebSocketClient,
     private val modelManager: ModelManager,
 ) : ViewModel() {
 
@@ -93,6 +94,8 @@ class VoiceViewModel @Inject constructor(
             val config = connectionRepository.getConnectionConfig()
             if (config != null) {
                 haClient.configure(config.url, config.token)
+                haWebSocketClient.configure(config.url, config.token)
+                haWebSocketClient.connect()
                 android.util.Log.d("JarvisVoice", "HaClient configured with ${config.url}")
             } else {
                 android.util.Log.w("JarvisVoice", "No HA connection config found")
