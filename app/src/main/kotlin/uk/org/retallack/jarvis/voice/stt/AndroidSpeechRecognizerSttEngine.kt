@@ -61,6 +61,7 @@ class AndroidSpeechRecognizerSttEngine @Inject constructor(
 
         override fun onError(error: Int) {
             val errorMessage = mapErrorCode(error)
+            android.util.Log.e("JarvisSTT", "Recognition error: $error ($errorMessage)")
             _state.value = SttState.ERROR
             _results.tryEmit(SttResult(text = errorMessage, isFinal = true, confidence = 0f))
         }
@@ -102,7 +103,11 @@ class AndroidSpeechRecognizerSttEngine @Inject constructor(
 
     override suspend fun initialize(modelPath: String): Boolean = withContext(Dispatchers.Main) {
         try {
-            if (!SpeechRecognizer.isRecognitionAvailable(context)) {
+            val isAvailable = SpeechRecognizer.isRecognitionAvailable(context)
+            android.util.Log.d("JarvisSTT", "SpeechRecognizer.isRecognitionAvailable = $isAvailable")
+
+            if (!isAvailable) {
+                android.util.Log.e("JarvisSTT", "Speech recognition not available on this device")
                 _state.value = SttState.ERROR
                 return@withContext false
             }
@@ -113,28 +118,47 @@ class AndroidSpeechRecognizerSttEngine @Inject constructor(
             if (serviceComponent == null) {
                 val discovery = SttServiceDiscovery(context)
                 val services = discovery.getAvailableServices()
+                android.util.Log.d("JarvisSTT", "Found ${services.size} STT services: ${services.map { "${it.label} (${it.packageName})" }}")
                 if (services.isNotEmpty()) {
-                    serviceComponent = services.first().componentName
+                    // Prefer dedicated STT engines over HA Companion (which proxies to server)
+                    // Priority: Whisper > FUTO > Vosk/Dicio > anything else
+                    val preferred = services.firstOrNull { it.packageName.contains("whisper") }
+                        ?: services.firstOrNull { it.packageName.contains("futo") }
+                        ?: services.firstOrNull { it.packageName.contains("vosk") || it.packageName.contains("dicio") }
+                        ?: services.firstOrNull { !it.packageName.contains("homeassistant") }
+                        ?: services.first()
+                    serviceComponent = preferred.componentName
+                    android.util.Log.d("JarvisSTT", "Auto-selected STT service: ${preferred.label} (${preferred.packageName})")
+                } else {
+                    android.util.Log.e("JarvisSTT", "No STT services found!")
                 }
             }
 
             speechRecognizer = if (serviceComponent != null) {
+                android.util.Log.d("JarvisSTT", "Creating SpeechRecognizer with service: $serviceComponent")
                 SpeechRecognizer.createSpeechRecognizer(context, serviceComponent!!)
             } else {
+                android.util.Log.d("JarvisSTT", "Creating SpeechRecognizer with default service")
                 SpeechRecognizer.createSpeechRecognizer(context)
             }
 
             speechRecognizer?.setRecognitionListener(recognitionListener)
             _state.value = SttState.READY
+            android.util.Log.d("JarvisSTT", "STT engine initialized successfully, state=READY")
             true
         } catch (e: Exception) {
+            android.util.Log.e("JarvisSTT", "Failed to initialize STT engine", e)
             _state.value = SttState.ERROR
             false
         }
     }
 
     override suspend fun startListening() = withContext(Dispatchers.Main) {
-        if (_state.value != SttState.READY) return@withContext
+        android.util.Log.d("JarvisSTT", "startListening called, current state=${_state.value}")
+        if (_state.value != SttState.READY) {
+            android.util.Log.w("JarvisSTT", "Cannot start listening - state is ${_state.value}, not READY")
+            return@withContext
+        }
 
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(
@@ -147,8 +171,9 @@ class AndroidSpeechRecognizerSttEngine @Inject constructor(
 
         try {
             speechRecognizer?.startListening(intent)
-            // State will transition to LISTENING via onReadyForSpeech callback
+            android.util.Log.d("JarvisSTT", "startListening dispatched to SpeechRecognizer")
         } catch (e: Exception) {
+            android.util.Log.e("JarvisSTT", "startListening failed", e)
             _state.value = SttState.ERROR
         }
     }
