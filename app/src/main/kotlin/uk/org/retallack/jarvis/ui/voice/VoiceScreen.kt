@@ -63,6 +63,18 @@ fun VoiceScreen(
         }
     }
 
+    // Speech recognition via Intent (works on all Android versions)
+    val speechLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val text = uk.org.retallack.jarvis.voice.stt.SttIntentHelper.extractResult(
+            result.resultCode, result.data
+        )
+        if (text != null) {
+            viewModel.onSpeechResult(text)
+        }
+    }
+
     val context = androidx.compose.ui.platform.LocalContext.current
     val hasRecordPermission = {
         androidx.core.content.ContextCompat.checkSelfPermission(
@@ -87,7 +99,9 @@ fun VoiceScreen(
                 mode = mode,
                 onClick = {
                     if (hasRecordPermission()) {
-                        viewModel.onMicTap()
+                        // Use intent-based speech recognition (works on all Android versions)
+                        val intent = uk.org.retallack.jarvis.voice.stt.SttIntentHelper.createRecognitionIntent()
+                        speechLauncher.launch(intent)
                     } else {
                         permissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
                     }

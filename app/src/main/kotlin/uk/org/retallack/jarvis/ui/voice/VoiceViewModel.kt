@@ -142,6 +142,19 @@ class VoiceViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Called when speech recognition via Intent returns a result.
+     * This bypasses the SpeechRecognizer binding and works on all Android versions.
+     */
+    fun onSpeechResult(text: String) {
+        wakeWordTriggered = false
+        viewModelScope.launch {
+            if (text.isNotBlank()) {
+                processCommand(text)
+            }
+        }
+    }
+
     fun onWakeWordDetected() {
         wakeWordTriggered = true
         startListening()

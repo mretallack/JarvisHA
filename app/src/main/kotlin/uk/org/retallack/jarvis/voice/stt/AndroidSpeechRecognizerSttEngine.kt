@@ -120,11 +120,12 @@ class AndroidSpeechRecognizerSttEngine @Inject constructor(
                 val services = discovery.getAvailableServices()
                 android.util.Log.d("JarvisSTT", "Found ${services.size} STT services: ${services.map { "${it.label} (${it.packageName})" }}")
                 if (services.isNotEmpty()) {
-                    // Prefer dedicated STT engines over HA Companion (which proxies to server)
-                    // Priority: Whisper > FUTO > Vosk/Dicio > anything else
-                    val preferred = services.firstOrNull { it.packageName.contains("whisper") }
+                    // Prefer services known to work as RecognitionService for other apps
+                    // Dicio's SttService is designed for this. Whisper may have permission issues.
+                    val preferred = services.firstOrNull { it.packageName.contains("dicio") }
+                        ?: services.firstOrNull { it.packageName.contains("whisper") }
                         ?: services.firstOrNull { it.packageName.contains("futo") }
-                        ?: services.firstOrNull { it.packageName.contains("vosk") || it.packageName.contains("dicio") }
+                        ?: services.firstOrNull { it.packageName.contains("vosk") }
                         ?: services.firstOrNull { !it.packageName.contains("homeassistant") }
                         ?: services.first()
                     serviceComponent = preferred.componentName
@@ -167,6 +168,11 @@ class AndroidSpeechRecognizerSttEngine @Inject constructor(
             )
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-GB")
+            // Tell the recognizer which component to use
+            if (serviceComponent != null) {
+                putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
+            }
         }
 
         try {
