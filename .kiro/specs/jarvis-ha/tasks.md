@@ -45,10 +45,18 @@
 - [x] 4.6 Implement model storage (app internal storage, check existence on launch)
 - [x] 4.7 Write unit tests: engine state machine (init → listening → partial → final)
 - [x] 4.8 Write integration test: mock audio input → verify transcription flow
-- [x] 4.9 **NEW** Implement `AndroidSpeechRecognizerSttEngine` using `android.speech.SpeechRecognizer` API
-- [x] 4.10 **NEW** Enumerate installed recognition services, allow user to select in settings
-- [x] 4.11 **NEW** Handle case where no recognition service is installed (show install prompt)
-- [x] 4.12 **NEW** Write unit tests for SpeechRecognizer engine wrapper
+- [x] 4.9 ~~**NEW** Implement `AndroidSpeechRecognizerSttEngine` using `android.speech.SpeechRecognizer` API~~ **OBSOLETE** — replaced by Sherpa-ONNX integrated approach (SpeechRecognizer has ERROR_INSUFFICIENT_PERMISSIONS on Android 13+)
+- [x] 4.10 ~~**NEW** Enumerate installed recognition services, allow user to select in settings~~ **OBSOLETE** — replaced by Sherpa-ONNX integrated approach
+- [x] 4.11 ~~**NEW** Handle case where no recognition service is installed (show install prompt)~~ **OBSOLETE** — replaced by Sherpa-ONNX integrated approach
+- [x] 4.12 ~~**NEW** Write unit tests for SpeechRecognizer engine wrapper~~ **OBSOLETE** — replaced by Sherpa-ONNX integrated approach
+- [ ] 4.13 Add sherpa-onnx-android dependency to build.gradle (Maven Central)
+- [ ] 4.14 Implement real SherpaOnnxSttEngine with AudioRecord capture (16kHz mono)
+- [ ] 4.15 Implement streaming recognition with partial results via Flow
+- [ ] 4.16 Implement VAD (voice activity detection) for end-of-speech
+- [ ] 4.17 Implement ModelDownloader for STT model (HuggingFace, progress via Flow)
+- [ ] 4.18 Update setup wizard model download screen with real download logic
+- [ ] 4.19 Update VoiceScreen mic tap to use integrated STT (remove intent-based)
+- [ ] 4.20 Test on device with real audio
 
 ## Phase 5: Voice Pipeline — TTS
 

@@ -25,7 +25,7 @@ JarvisHA is an Android voice assistant application purpose-built for controlling
 |---|---|
 | Connection setup | Single URL + token, test connection, setup wizard |
 | Voice command | Tap mic button or wake word → STT → HA Conversation API → TTS response |
-| STT | Android `SpeechRecognizer` API (uses whatever STT service is installed — Whisper, Vosk, FUTO Voice Input, etc.). Sherpa-ONNX as built-in fallback if no service available. |
+| STT | Sherpa-ONNX streaming (model downloaded on first launch, ~30-50MB). Integrated AudioRecord capture, real-time partial results. |
 | TTS | Android `TextToSpeech` API (uses whatever TTS engine is installed — eSpeak-NG, RHVoice, Piper TTS, etc.). No bundled models needed. Speak on wake word activation only; text-only response on mic tap. |
 | Wake word | "Hey Jarvis" TFLite model bundled (OpenWakeWord), opt-in during setup with battery warning |
 | Quiet hours | Configurable schedule to disable wake word |
@@ -46,6 +46,7 @@ JarvisHA is an Android voice assistant application purpose-built for controlling
 
 ### Deferred (v1.1+)
 
+- Android SpeechRecognizer API as alternative STT engine (blocked by ERROR_INSUFFICIENT_PERMISSIONS on Android 13+)
 - Dashboard / entity state cards / tap-to-toggle controls
 - Notifications from HA
 - Offline fallback intent matching / command queue
@@ -120,61 +121,64 @@ As a user, I want real-time updates from my HA instance so that the app always s
 
 ## 2. Voice Input (Speech-to-Text)
 
-### User Story 2.1: STT via Android SpeechRecognizer API
+### User Story 2.1: STT via Sherpa-ONNX (Integrated, Streaming)
 
-As a user, I want speech recognition to use whatever STT service I have installed on my phone so I don't need to download additional models.
-
-**Acceptance Criteria:**
-
-- [ ] App uses Android's standard `SpeechRecognizer` API to get speech input
-- [ ] Works with any installed recognition service (Whisper, FUTO Voice Input, Vosk, Dicio, HA Companion)
-- [ ] User can select which installed recognition service to use in settings
-- [ ] Partial results displayed as user speaks (if the provider supports it)
-- [ ] No mandatory model downloads — uses what's already on the phone
-- [ ] Works fully offline if the selected recognition service supports offline (e.g., Whisper, Vosk)
-
-**Requirements (EARS):**
-
-- THE SYSTEM SHALL use Android's `SpeechRecognizer` API as the primary STT mechanism.
-- WHEN multiple recognition services are installed, THE SYSTEM SHALL list them in settings and allow the user to select one.
-- WHEN no recognition service is installed, THE SYSTEM SHALL display a message directing the user to install one (e.g., FUTO Voice Input or Whisper from F-Droid).
-- WHEN the selected recognition service provides partial results, THE SYSTEM SHALL display them in real-time.
-- THE SYSTEM SHALL NOT require Google Play Services for speech recognition — only FOSS-compatible recognition services are listed.
-
-### User Story 2.2: Sherpa-ONNX Fallback STT (Optional)
-
-As a user, I want a built-in STT option in case I don't have a separate speech recognition app installed.
+As a user, I want speech recognition to work seamlessly within the app so I can speak naturally and see real-time transcription without external UIs or extra taps.
 
 **Acceptance Criteria:**
 
-- [ ] App offers Sherpa-ONNX as a built-in STT option (requires model download)
-- [ ] Model download is opt-in, clearly explained with size and purpose
-- [ ] Downloads from upstream (HuggingFace) with progress indicator
-- [ ] Once downloaded, works fully offline
+- [ ] App uses Sherpa-ONNX library running in-process for speech recognition
+- [ ] Audio captured via AudioRecord API (16kHz, mono)
+- [ ] Streaming recognition provides real-time partial results as user speaks
+- [ ] VAD (voice activity detection) detects end of speech and produces final transcription
+- [ ] STT model (~30-50MB) downloaded on first launch from HuggingFace with user consent
+- [ ] Once downloaded, works fully offline with no network required
+- [ ] No external UI launched — fully integrated experience
 
 **Requirements (EARS):**
 
-- WHEN no Android recognition service is available AND the user has not downloaded the built-in model, THE SYSTEM SHALL offer to download the Sherpa-ONNX model as a fallback.
-- WHEN the user opts to download the built-in model, THE SYSTEM SHALL download from upstream with a progress indicator and clear consent.
-- THE SYSTEM SHALL treat the built-in Sherpa-ONNX engine as a fallback — Android SpeechRecognizer is preferred when available.
+- THE SYSTEM SHALL use Sherpa-ONNX as the primary STT engine, running integrated within the app process.
+- THE SYSTEM SHALL capture audio via Android's AudioRecord API at 16kHz sample rate, mono channel.
+- THE SYSTEM SHALL feed captured audio frames to Sherpa-ONNX streaming recognizer for real-time transcription.
+- WHEN partial recognition results are available, THE SYSTEM SHALL display them in the UI in real-time as the user speaks.
+- WHEN VAD detects end of speech (silence exceeding configured threshold), THE SYSTEM SHALL finalize the transcription and proceed with intent processing.
+- THE SYSTEM SHALL NOT launch any external activity or UI for speech recognition — the experience is fully integrated.
 
-### User Story 2.3: STT Engine Selection
+### User Story 2.2: STT Model Download
 
-As a user, I want to choose which speech recognition service to use.
+As a user, I want the STT model download to be a clear, consent-driven process so I understand what's being downloaded and why.
 
 **Acceptance Criteria:**
 
-- [ ] Settings screen lists all installed Android recognition services
-- [ ] Shows service name and package (e.g., "Whisper (org.woheller69.whisper)")
-- [ ] Option for built-in Sherpa-ONNX (if model downloaded)
-- [ ] Switching does not require app restart
+- [ ] Model download requires explicit user consent before starting
+- [ ] Clear explanation of what's being downloaded (STT model), from where (HuggingFace), and size (~30-50MB)
+- [ ] Download progress shown with percentage and bytes transferred
+- [ ] Download can be cancelled and resumed
+- [ ] Model stored in app internal storage, persists across app restarts
+- [ ] Setup wizard includes model download step on first launch
 
 **Requirements (EARS):**
 
-- THE SYSTEM SHALL provide a settings UI to list all installed Android recognition services and the built-in Sherpa-ONNX fallback.
-- THE SYSTEM SHALL allow configuration of a fallback STT engine that activates when the primary engine is unavailable.
-- WHEN the primary STT engine fails to initialise or becomes unavailable, THE SYSTEM SHALL switch to the fallback engine within 2 seconds and display a notification.
-- THE SYSTEM SHALL clearly label each engine option with: offline capability and whether it requires model download.
+- WHEN the app launches for the first time AND no STT model is present, THE SYSTEM SHALL present a consent screen explaining the model download (source: HuggingFace, size: ~30-50MB, purpose: on-device speech recognition).
+- WHEN the user consents to download, THE SYSTEM SHALL download the model with a progress indicator showing percentage and estimated time remaining.
+- WHEN the download is interrupted (network loss, user cancel), THE SYSTEM SHALL support resuming the download from where it left off.
+- WHEN the model is successfully downloaded, THE SYSTEM SHALL store it in app internal storage and verify its integrity.
+- THE SYSTEM SHALL NOT proceed with voice commands until the STT model is downloaded and verified.
+
+### User Story 2.3: Android SpeechRecognizer Option (Deferred)
+
+As a user, I may want to use Android's SpeechRecognizer API as an alternative STT engine in the future.
+
+**Acceptance Criteria:**
+
+- [ ] (DEFERRED to v1.1+) Option to use Android SpeechRecognizer API as alternative STT
+- [ ] (DEFERRED) Support for installed recognition services (Whisper, FUTO, Vosk)
+- [ ] (DEFERRED) User can select which recognition service to use in settings
+
+**Requirements (EARS):**
+
+- NOTE: Android SpeechRecognizer API is deferred due to ERROR_INSUFFICIENT_PERMISSIONS on Android 13+ (binding approach) and the intent-based approach launching an external UI that requires an extra tap and feels disconnected.
+- IN FUTURE, THE SYSTEM MAY support Android SpeechRecognizer as an optional alternative STT engine if permission issues are resolved in future Android versions.
 
 ---
 

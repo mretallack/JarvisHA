@@ -21,10 +21,10 @@ The following architectural decisions have been validated against a live HA inst
 |---|---|---|
 | App purpose | Voice assistant only | Not a dashboard — Companion app handles visual control |
 | Package name | `uk.org.retallack.jarvis` | Developer-owned domain |
-| STT engine | Android `SpeechRecognizer` API (primary) | Uses whatever STT is installed (Whisper, FUTO, Vosk). No model download needed. Sherpa-ONNX as built-in fallback. |
+| STT engine | Sherpa-ONNX (integrated, streaming) | SpeechRecognizer API has permission issues on Android 13+; intent-based launches external UI. Sherpa-ONNX gives full control. |
 | TTS engine | Android `TextToSpeech` API | Uses system TTS engine (eSpeak-NG, RHVoice, etc.). Zero code to maintain. Same as Dicio. |
 | Wake word | OpenWakeWord TFLite ("Hey Jarvis" bundled) | Proven, ~2MB model |
-| Model delivery | No downloads needed for STT/TTS (uses system services). Sherpa-ONNX fallback downloads from upstream if needed. | Small APK, instant voice on first launch |
+| Model delivery | STT model (~30-50MB) downloaded on first launch from HuggingFace with user consent. TTS uses system API (no download). Wake word bundled. | Small APK, seamless integrated STT |
 | Connection | Single URL | External HTTPS fast enough (~185ms), simplifies v1.0 |
 | Conversation agent | Default `conversation.home_assistant` | 185ms vs 55s (Ollama), configurable in settings |
 | Intent processing | HA Conversation API only | No local matching — if HA is down, show error |
@@ -42,7 +42,7 @@ The following architectural decisions have been validated against a live HA inst
 Setup Wizard (first launch only)
     ├── Welcome
     ├── HA Connection (URL + token + test)
-    ├── Check STT/TTS Services (verify installed, offer fallback if needed)
+    ├── STT Model Download (consent, progress, ~30-50MB from HuggingFace)
     ├── Wake Word (opt-in + battery warning)
     ├── Quiet Hours (optional, if wake word enabled)
     └── Done
@@ -101,7 +101,7 @@ Settings (gear icon)
 | Networking | OkHttp 5 + Retrofit | Battle-tested, native WebSocket support |
 | Local DB | Room | Entity cache, conversation history, notifications |
 | Preferences | Protobuf DataStore | Type-safe, async, structured settings |
-| STT | Android `SpeechRecognizer` API (Sherpa-ONNX fallback) | Uses installed services (Whisper, FUTO, Vosk) |
+| STT | Sherpa-ONNX (on-device, streaming) | Integrated AudioRecord capture, real-time partial results, VAD |
 | TTS | Android `TextToSpeech` API | Uses system TTS, no models needed |
 | Wake Word | OpenWakeWord via LiteRT | TFLite models bundled (~2.7MB) |
 | Serialisation | Kotlinx Serialization | JSON export/import, API responses |
@@ -271,9 +271,9 @@ The voice pipeline is modular — each stage (wake word, STT, intent, TTS) has a
 └──────────┘    └─────┘    └────────────────────┘    └─────┘    └─────────┘
      │              │              │                       │
      │              │              │                       │
-  TFLite        Android        HA REST/WS             Android
-  Model         SpeechRecognizer  or Local Fallback   TextToSpeech
-                (Sherpa-ONNX fallback)
+  TFLite     Sherpa-ONNX       HA REST/WS             Android
+  Model      (AudioRecord →    or Local Fallback      TextToSpeech
+             streaming recognition)
 ```
 
 #### STT Engine Interface
@@ -298,8 +298,7 @@ sealed class SttResult {
 ```
 
 Implementations:
-- `AndroidSpeechRecognizerSttEngine` — Primary, uses installed Android recognition service (Whisper, FUTO, Vosk, etc.)
-- `SherpaOnnxSttEngine` — Fallback, offline, streaming (zipformer) or batch (whisper), requires model download
+- `SherpaOnnxSttEngine` — Primary, integrated in-app, streaming recognition via AudioRecord (16kHz mono) with VAD for end-of-speech detection. Model (~30-50MB) downloaded on first launch from HuggingFace.
 
 #### TTS Engine Interface
 
@@ -527,7 +526,7 @@ No manual mapping required. The HA Conversation API handles entity resolution by
     ]
   },
   "preferences": {
-    "stt_engine": "android_speech_recognizer",
+    "stt_engine": "sherpa_onnx",
     "tts_engine": "android_tts",
     "wake_word_enabled": true,
     "wake_word_sensitivity": 0.5,
@@ -608,7 +607,7 @@ User says "Hey Jarvis, turn off the living room lights"
 
 1. WakeWordService detects "Hey Jarvis" via TFLite model
 2. Service broadcasts wake detection → Voice UI activates
-3. STT engine starts listening (Android SpeechRecognizer)
+3. STT engine starts listening (AudioRecord 16kHz mono → Sherpa-ONNX streaming recognizer)
 4. Partial results displayed: "turn off the..." → "turn off the living room..." → "turn off the living room lights"
 5. VAD detects silence → final transcription produced
 6. Text sent to HA Conversation API: POST conversation/process { text: "turn off the living room lights" }
@@ -626,7 +625,7 @@ User says "Hey Jarvis, turn off the living room lights"
 User says "Hey Jarvis, turn off the kitchen"
 (HA server unreachable)
 
-1. Wake word detected → STT activates (Android SpeechRecognizer — works offline if installed service supports it)
+1. Wake word detected → STT activates (AudioRecord → Sherpa-ONNX — works fully offline, model is local)
 2. Transcription: "turn off the kitchen"
 3. HA Conversation API call fails (connection refused)
 4. Fallback to LocalIntentMatcher:
@@ -651,7 +650,7 @@ User says "Hey Jarvis, turn off the kitchen"
 | Favourites & aliases | Room | User-defined favourites, voice aliases |
 | Quick actions | Protobuf DataStore | User-defined quick action buttons |
 | Secrets | Android Keystore | HA access token |
-| STT/TTS models | App internal storage | Sherpa-ONNX model (only if fallback used) |
+| STT/TTS models | App internal storage | Sherpa-ONNX STT model (~30-50MB, downloaded on first launch) |
 | Wake word models | App assets + internal storage | Bundled Hey Jarvis + custom models |
 
 ---
@@ -697,8 +696,8 @@ kapt("androidx.room:room-compiler:2.6.1")
 implementation("androidx.datastore:datastore:1.1.1")
 implementation("com.google.protobuf:protobuf-javalite:4.27.3")
 
-// STT (optional fallback only — primary uses Android SpeechRecognizer API, no library needed)
-// implementation("com.k2fsa.sherpa:sherpa-onnx-android:x.y.z")  // optional fallback
+// STT (integrated, primary engine)
+implementation("com.k2fsa.sherpa:sherpa-onnx-android:x.y.z")  // Sherpa-ONNX streaming STT
 
 // TTS — uses Android TextToSpeech API, no library dependency
 
