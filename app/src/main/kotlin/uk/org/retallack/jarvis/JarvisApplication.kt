@@ -1,0 +1,7 @@
+package uk.org.retallack.jarvis
+
+import android.app.Application
+import dagger.hilt.android.HiltAndroidApp
+
+@HiltAndroidApp
+class JarvisApplication : Application()
