@@ -281,7 +281,7 @@ class VoiceViewModel @Inject constructor(
                     messageDao.insert(
                         ConversationMessageDb(text = errorText, isUser = false, isError = true),
                     )
-                    _mode.value = VoiceUiMode.ERROR
+                    _mode.value = VoiceUiMode.IDLE
                 }
             }
         }

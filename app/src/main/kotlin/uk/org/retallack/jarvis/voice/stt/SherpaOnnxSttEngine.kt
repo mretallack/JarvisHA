@@ -212,12 +212,16 @@ class SherpaOnnxSttEngine @Inject constructor(
         try {
             val currentStream = stream ?: return
 
-            // Feed a small pre-buffer of silence to warm up the recognizer
-            // This prevents the first word from being missed
+            // Feed a pre-buffer of silence to warm up the recognizer
+            // This prevents the first word from being missed.
+            // We need ~300ms of silence (4800 samples at 16kHz) for the model to be ready.
+            val silenceFrames = 3 // Feed 3 chunks of silence (~600ms)
             val silenceBuffer = FloatArray(CHUNK_SIZE) { 0.0f }
-            currentStream.acceptWaveform(silenceBuffer, SAMPLE_RATE)
-            while (rec.isReady(currentStream)) {
-                rec.decode(currentStream)
+            repeat(silenceFrames) {
+                currentStream.acceptWaveform(silenceBuffer, SAMPLE_RATE)
+                while (rec.isReady(currentStream)) {
+                    rec.decode(currentStream)
+                }
             }
 
             while (currentCoroutineContext().isActive && _state.value == SttState.LISTENING) {
