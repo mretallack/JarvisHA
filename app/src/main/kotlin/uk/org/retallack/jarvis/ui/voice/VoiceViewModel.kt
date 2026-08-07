@@ -209,9 +209,16 @@ class VoiceViewModel @Inject constructor(
 
     private fun stopListening() {
         viewModelScope.launch {
+            // Get any partial text before stopping
+            val currentPartial = _partialText.value
             sttEngine.stopListening()
-            // Always reset UI mode regardless of STT state
+            _partialText.value = ""
             _mode.value = VoiceUiMode.IDLE
+
+            // If we have partial text, process it as a command
+            if (currentPartial.isNotBlank()) {
+                processCommand(currentPartial)
+            }
         }
     }
 
