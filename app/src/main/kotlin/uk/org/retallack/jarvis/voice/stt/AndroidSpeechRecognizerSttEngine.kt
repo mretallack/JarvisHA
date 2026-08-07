@@ -109,6 +109,15 @@ class AndroidSpeechRecognizerSttEngine @Inject constructor(
 
             speechRecognizer?.destroy()
 
+            // If no specific service set, try to find one automatically
+            if (serviceComponent == null) {
+                val discovery = SttServiceDiscovery(context)
+                val services = discovery.getAvailableServices()
+                if (services.isNotEmpty()) {
+                    serviceComponent = services.first().componentName
+                }
+            }
+
             speechRecognizer = if (serviceComponent != null) {
                 SpeechRecognizer.createSpeechRecognizer(context, serviceComponent!!)
             } else {
