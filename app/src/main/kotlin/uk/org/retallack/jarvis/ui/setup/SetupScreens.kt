@@ -163,15 +163,19 @@ fun ModelDownloadScreen(
         )
         Text(
             text = "JarvisHA uses on-device speech recognition. " +
-                "The STT model (~30MB) will be downloaded for offline use.",
+                "A speech model will be downloaded once for offline use.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            text = "• Speech-to-Text: Sherpa-ONNX streaming model (20M params)\n" +
+            text = "Model: Sherpa-ONNX Streaming Zipformer (English, 20M params)\n" +
+                "Size: ~30MB (4 files)\n" +
+                "Source: HuggingFace (k2-fsa/sherpa-onnx)\n" +
+                "Licence: Apache 2.0\n\n" +
                 "• All processing stays on your device\n" +
-                "• Works fully offline after download",
+                "• Works fully offline after download\n" +
+                "• No data sent to third parties",
             style = MaterialTheme.typography.bodyMedium,
         )
 

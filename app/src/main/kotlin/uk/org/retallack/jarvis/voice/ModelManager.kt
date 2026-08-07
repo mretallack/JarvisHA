@@ -141,6 +141,7 @@ class ModelManager @Inject constructor(
             emit(current)
 
             try {
+                android.util.Log.d("ModelManager", "Downloading ${modelFile.filename} from ${modelFile.url}")
                 downloadFile(
                     url = modelFile.url,
                     destination = File(dir, modelFile.filename),
@@ -151,8 +152,10 @@ class ModelManager @Inject constructor(
                     )
                     _sttDownloadState.value = updated
                 }
+                android.util.Log.d("ModelManager", "Downloaded ${modelFile.filename} successfully")
                 completed++
             } catch (e: IOException) {
+                android.util.Log.e("ModelManager", "Failed to download ${modelFile.filename}", e)
                 val error = progress.copy(
                     error = "Failed to download ${modelFile.filename}: ${e.message}",
                 )
@@ -247,8 +250,17 @@ class ModelManager @Inject constructor(
         destination: File,
         onProgress: (downloaded: Long, total: Long) -> Unit,
     ) {
+        // Use a separate client with longer timeouts for model downloads
+        val downloadClient = okHttpClient.newBuilder()
+            .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(5, java.util.concurrent.TimeUnit.MINUTES)
+            .writeTimeout(5, java.util.concurrent.TimeUnit.MINUTES)
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .build()
+
         val request = Request.Builder().url(url).build()
-        val response = okHttpClient.newCall(request).execute()
+        val response = downloadClient.newCall(request).execute()
 
         if (!response.isSuccessful) {
             throw IOException("HTTP ${response.code}: ${response.message}")
