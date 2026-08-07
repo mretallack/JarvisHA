@@ -41,7 +41,7 @@
 - [x] 4.2 Implement `SherpaOnnxSttEngine` (implements `SttEngine` interface)
 - [x] 4.3 Implement streaming recognition with partial results
 - [x] 4.4 Implement VAD (voice activity detection) for end-of-speech
-- [ ] 4.5 Implement model manager — download from upstream with progress, consent UI
+- [x] 4.5 Implement model manager — download from upstream with progress, consent UI
 - [x] 4.6 Implement model storage (app internal storage, check existence on launch)
 - [x] 4.7 Write unit tests: engine state machine (init → listening → partial → final)
 - [x] 4.8 Write integration test: mock audio input → verify transcription flow
@@ -49,7 +49,7 @@
 ## Phase 5: Voice Pipeline — TTS
 
 - [x] 5.1 Implement `SherpaOnnxTtsEngine` with Piper voice models
-- [ ] 5.2 Implement audio playback (AudioTrack or MediaPlayer, respect audio focus)
+- [x] 5.2 Implement audio playback (AudioTrack or MediaPlayer, respect audio focus)
 - [ ] 5.3 Implement model download for TTS (bundled in same download as STT or separate)
 - [ ] 5.4 Implement eSpeak-NG fallback (bundled, no download needed)
 - [x] 5.5 Implement TTS behaviour: speak on wake word activation, silent on mic tap
@@ -58,8 +58,8 @@
 ## Phase 6: Voice Pipeline — Wake Word
 
 - [x] 6.1 Implement `WakeWordEngine` using LiteRT (TFLite) with "Hey Jarvis" model
-- [ ] 6.2 Bundle "Hey Jarvis" TFLite model in APK assets
-- [ ] 6.3 Implement `WakeWordService` (foreground service, persistent notification)
+- [x] 6.2 Bundle "Hey Jarvis" TFLite model in APK assets
+- [x] 6.3 Implement `WakeWordService` (foreground service, persistent notification)
 - [x] 6.4 Implement sensitivity configuration
 - [x] 6.5 Implement quiet hours (schedule-based disable)
 - [x] 6.6 Implement wake word → activate STT handoff
@@ -139,7 +139,7 @@
 - [x] 13.2 Integrate AndroidX Biometric library
 - [x] 13.3 Implement biometric prompt before sensitive service calls
 - [x] 13.4 Implement configurable sensitive domain list in settings
-- [ ] 13.5 Implement screen wake on wake word detection (when screen off)
+- [x] 13.5 Implement screen wake on wake word detection (when screen off)
 - [x] 13.6 Write unit tests: sensitive domain check, biometric gate logic
 
 ## Phase 14: Widget
@@ -155,9 +155,9 @@
 - [ ] 15.3 Memory profiling: ensure < 150MB RAM usage
 - [ ] 15.4 Test on degoogled ROM (LineageOS or GrapheneOS emulator/device)
 - [ ] 15.5 Test with no network (verify "HA unavailable" gracefully)
-- [ ] 15.6 Add content descriptions to all interactive elements (accessibility)
+- [x] 15.6 Add content descriptions to all interactive elements (accessibility)
 - [ ] 15.7 Verify system font scaling works correctly
-- [ ] 15.8 Add app icon and splash screen
+- [x] 15.8 Add app icon and splash screen
 - [ ] 15.9 Update fastlane metadata (screenshots, description)
 - [ ] 15.10 Verify reproducible build (CI passes reproducibility check)
 - [ ] 15.11 Tag `v1.0.0` release

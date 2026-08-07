@@ -58,7 +58,9 @@ fun SettingsScreen(
                     if (state.isConnected) "Connected (${state.haVersion ?: state.haUrl})" else "Not connected",
                 )
             },
-            leadingContent = { Icon(Icons.Filled.Wifi, contentDescription = null) },
+            leadingContent = {
+                Icon(Icons.Filled.Wifi, contentDescription = "Connection settings")
+            },
             modifier = Modifier.clickable { /* navigate to connection settings */ },
         )
         HorizontalDivider()
@@ -70,7 +72,9 @@ fun SettingsScreen(
             supportingContent = {
                 Text(if (state.sttModelAvailable) "Model loaded" else "Model not available")
             },
-            leadingContent = { Icon(Icons.Filled.Mic, contentDescription = null) },
+            leadingContent = {
+                Icon(Icons.Filled.Mic, contentDescription = "Speech recognition settings")
+            },
             modifier = Modifier.clickable { },
         )
         HorizontalDivider()
@@ -79,7 +83,9 @@ fun SettingsScreen(
             supportingContent = {
                 Text(if (state.ttsModelAvailable) "Model loaded" else "Model not available")
             },
-            leadingContent = { Icon(Icons.Filled.RecordVoiceOver, contentDescription = null) },
+            leadingContent = {
+                Icon(Icons.Filled.RecordVoiceOver, contentDescription = "Text to speech settings")
+            },
             modifier = Modifier.clickable { },
         )
         HorizontalDivider()
@@ -94,7 +100,9 @@ fun SettingsScreen(
                     ?: "Default (Home Assistant)"
                 Text(agentName)
             },
-            leadingContent = { Icon(Icons.Filled.SmartToy, contentDescription = null) },
+            leadingContent = {
+                Icon(Icons.Filled.SmartToy, contentDescription = "Conversation agent settings")
+            },
             modifier = Modifier.clickable { showAgentDialog = true },
         )
         HorizontalDivider()
@@ -106,7 +114,9 @@ fun SettingsScreen(
             supportingContent = {
                 Text(if (state.wakeWordEnabled) "Enabled" else "Disabled")
             },
-            leadingContent = { Icon(Icons.Filled.Code, contentDescription = null) },
+            leadingContent = {
+                Icon(Icons.Filled.Code, contentDescription = "Wake word settings")
+            },
             modifier = Modifier.clickable { },
         )
         HorizontalDivider()
@@ -121,7 +131,9 @@ fun SettingsScreen(
                     },
                 )
             },
-            leadingContent = { Icon(Icons.Filled.Nightlight, contentDescription = null) },
+            leadingContent = {
+                Icon(Icons.Filled.Nightlight, contentDescription = "Quiet hours settings")
+            },
             modifier = Modifier.clickable { },
         )
         HorizontalDivider()
@@ -133,7 +145,9 @@ fun SettingsScreen(
             supportingContent = {
                 Text(if (state.biometricEnabled) "Required for sensitive devices" else "Disabled")
             },
-            leadingContent = { Icon(Icons.Filled.Security, contentDescription = null) },
+            leadingContent = {
+                Icon(Icons.Filled.Security, contentDescription = "Biometric security settings")
+            },
             modifier = Modifier.clickable { },
         )
         HorizontalDivider()
@@ -151,7 +165,9 @@ fun SettingsScreen(
                     },
                 )
             },
-            leadingContent = { Icon(Icons.Filled.Brightness6, contentDescription = null) },
+            leadingContent = {
+                Icon(Icons.Filled.Brightness6, contentDescription = "Theme settings")
+            },
             modifier = Modifier.clickable { showThemeDialog = true },
         )
         HorizontalDivider()
@@ -161,7 +177,9 @@ fun SettingsScreen(
         ListItem(
             headlineContent = { Text("JarvisHA") },
             supportingContent = { Text("Version ${state.appVersion}") },
-            leadingContent = { Icon(Icons.Filled.Info, contentDescription = null) },
+            leadingContent = {
+                Icon(Icons.Filled.Info, contentDescription = "About JarvisHA")
+            },
         )
     }
 

@@ -51,6 +51,7 @@ fun EntitiesScreen(
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             singleLine = true,
+            label = { Text("Search") },
         )
 
         // Domain filters
