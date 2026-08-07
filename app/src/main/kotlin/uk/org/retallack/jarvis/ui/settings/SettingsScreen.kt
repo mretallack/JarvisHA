@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Nightlight
 import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Wifi
@@ -38,6 +39,7 @@ import uk.org.retallack.jarvis.ui.theme.ThemeMode
 @Composable
 fun SettingsScreen(
     modifier: Modifier = Modifier,
+    onRerunWizard: (() -> Unit)? = null,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -171,6 +173,17 @@ fun SettingsScreen(
             modifier = Modifier.clickable { showThemeDialog = true },
         )
         HorizontalDivider()
+
+        // Setup
+        SettingsSection("Setup")
+        ListItem(
+            headlineContent = { Text("Re-run Setup Wizard") },
+            supportingContent = { Text("Reconfigure connection, voice, and wake word settings") },
+            leadingContent = {
+                Icon(Icons.Filled.Refresh, contentDescription = "Re-run setup wizard")
+            },
+            modifier = Modifier.clickable { onRerunWizard?.invoke() },
+        )
 
         // About
         SettingsSection("About")
