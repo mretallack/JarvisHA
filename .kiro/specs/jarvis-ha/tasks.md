@@ -49,13 +49,13 @@
 - [x] 4.10 ~~**NEW** Enumerate installed recognition services, allow user to select in settings~~ **OBSOLETE** — replaced by Sherpa-ONNX integrated approach
 - [x] 4.11 ~~**NEW** Handle case where no recognition service is installed (show install prompt)~~ **OBSOLETE** — replaced by Sherpa-ONNX integrated approach
 - [x] 4.12 ~~**NEW** Write unit tests for SpeechRecognizer engine wrapper~~ **OBSOLETE** — replaced by Sherpa-ONNX integrated approach
-- [ ] 4.13 Add sherpa-onnx-android dependency to build.gradle (Maven Central)
-- [ ] 4.14 Implement real SherpaOnnxSttEngine with AudioRecord capture (16kHz mono)
-- [ ] 4.15 Implement streaming recognition with partial results via Flow
-- [ ] 4.16 Implement VAD (voice activity detection) for end-of-speech
-- [ ] 4.17 Implement ModelDownloader for STT model (HuggingFace, progress via Flow)
-- [ ] 4.18 Update setup wizard model download screen with real download logic
-- [ ] 4.19 Update VoiceScreen mic tap to use integrated STT (remove intent-based)
+- [x] 4.13 Add sherpa-onnx-android dependency to build.gradle (local AAR from GitHub releases)
+- [x] 4.14 Implement real SherpaOnnxSttEngine with AudioRecord capture (16kHz mono)
+- [x] 4.15 Implement streaming recognition with partial results via Flow
+- [x] 4.16 Implement VAD (voice activity detection) for end-of-speech
+- [x] 4.17 Implement ModelDownloader for STT model (HuggingFace, progress via Flow)
+- [x] 4.18 Update setup wizard model download screen with real download logic
+- [x] 4.19 Update VoiceScreen mic tap to use integrated STT (remove intent-based)
 - [ ] 4.20 Test on device with real audio
 
 ## Phase 5: Voice Pipeline — TTS

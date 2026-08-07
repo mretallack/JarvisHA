@@ -14,6 +14,7 @@ import uk.org.retallack.jarvis.data.db.dao.ConversationMessageDao
 import uk.org.retallack.jarvis.data.db.entity.ConversationMessageDb
 import uk.org.retallack.jarvis.data.repository.ConversationRepository
 import uk.org.retallack.jarvis.data.repository.ConversationResult
+import uk.org.retallack.jarvis.voice.ModelManager
 import uk.org.retallack.jarvis.voice.stt.SttEngine
 import uk.org.retallack.jarvis.voice.stt.SttResult
 import uk.org.retallack.jarvis.voice.stt.SttState
@@ -46,6 +47,7 @@ class VoiceViewModel @Inject constructor(
     private val messageDao: ConversationMessageDao,
     private val connectionRepository: uk.org.retallack.jarvis.data.repository.ConnectionRepository,
     private val haClient: uk.org.retallack.jarvis.data.ha.HaClient,
+    private val modelManager: ModelManager,
 ) : ViewModel() {
 
     private val _mode = MutableStateFlow(VoiceUiMode.IDLE)
@@ -80,6 +82,7 @@ class VoiceViewModel @Inject constructor(
         configureHaClient()
         initializeEngines()
         observeSttResults()
+        observeSttState()
     }
 
     private fun configureHaClient() {
@@ -96,7 +99,8 @@ class VoiceViewModel @Inject constructor(
 
     private fun initializeEngines() {
         viewModelScope.launch {
-            sttEngine.initialize("")
+            val modelDir = modelManager.getSttModelDir().absolutePath
+            sttEngine.initialize(modelDir)
             ttsEngine.initialize("")
         }
     }
@@ -105,6 +109,31 @@ class VoiceViewModel @Inject constructor(
         viewModelScope.launch {
             sttEngine.results.collect { result ->
                 handleSttResult(result)
+            }
+        }
+    }
+
+    private fun observeSttState() {
+        viewModelScope.launch {
+            sttEngine.state.collect { state ->
+                when (state) {
+                    SttState.LISTENING -> _mode.value = VoiceUiMode.LISTENING
+                    SttState.PROCESSING -> _mode.value = VoiceUiMode.PROCESSING
+                    SttState.READY -> {
+                        // Only go IDLE if we were listening/processing
+                        if (_mode.value == VoiceUiMode.LISTENING ||
+                            _mode.value == VoiceUiMode.PROCESSING
+                        ) {
+                            // Don't override - let handleSttResult manage transitions
+                        }
+                    }
+                    SttState.ERROR -> {
+                        if (_mode.value == VoiceUiMode.LISTENING) {
+                            _mode.value = VoiceUiMode.ERROR
+                        }
+                    }
+                    else -> {}
+                }
             }
         }
     }
@@ -142,19 +171,6 @@ class VoiceViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Called when speech recognition via Intent returns a result.
-     * This bypasses the SpeechRecognizer binding and works on all Android versions.
-     */
-    fun onSpeechResult(text: String) {
-        wakeWordTriggered = false
-        viewModelScope.launch {
-            if (text.isNotBlank()) {
-                processCommand(text)
-            }
-        }
-    }
-
     fun onWakeWordDetected() {
         wakeWordTriggered = true
         startListening()
@@ -166,7 +182,8 @@ class VoiceViewModel @Inject constructor(
             if (sttEngine.state.value == SttState.ERROR ||
                 sttEngine.state.value == SttState.UNINITIALIZED
             ) {
-                sttEngine.initialize("")
+                val modelDir = modelManager.getSttModelDir().absolutePath
+                sttEngine.initialize(modelDir)
             }
             _mode.value = VoiceUiMode.LISTENING
             _partialText.value = ""

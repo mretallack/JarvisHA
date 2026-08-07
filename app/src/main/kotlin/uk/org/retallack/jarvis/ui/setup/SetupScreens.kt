@@ -144,10 +144,13 @@ fun ConnectionScreen(
 
 @Composable
 fun ModelDownloadScreen(
+    viewModel: SetupViewModel,
     onNext: () -> Unit,
     onSkip: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val state by viewModel.uiState.collectAsState()
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -159,22 +162,59 @@ fun ModelDownloadScreen(
             style = MaterialTheme.typography.headlineMedium,
         )
         Text(
-            text = "JarvisHA uses on-device speech recognition and text-to-speech. " +
-                "Models will be downloaded when available (~150MB).",
+            text = "JarvisHA uses on-device speech recognition. " +
+                "The STT model (~30MB) will be downloaded for offline use.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            text = "• Speech-to-Text: Sherpa-ONNX streaming model\n" +
-                "• Text-to-Speech: Piper neural voice\n" +
-                "• All processing stays on your device",
+            text = "• Speech-to-Text: Sherpa-ONNX streaming model (20M params)\n" +
+                "• All processing stays on your device\n" +
+                "• Works fully offline after download",
             style = MaterialTheme.typography.bodyMedium,
         )
 
+        Spacer(modifier = Modifier.height(16.dp))
+
+        if (state.sttModelDownloaded) {
+            Text(
+                text = "✓ STT model ready",
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        } else if (state.isDownloadingSttModel) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator()
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Downloading... ${(state.sttDownloadProgress * 100).toInt()}%",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        } else {
+            if (state.sttDownloadError != null) {
+                Text(
+                    text = state.sttDownloadError!!,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Button(
+                onClick = { viewModel.downloadSttModel() },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Download STT Model (~30MB)")
+            }
+        }
+
         Spacer(modifier = Modifier.weight(1f))
 
-        Button(onClick = onNext, modifier = Modifier.fillMaxWidth()) {
+        Button(
+            onClick = onNext,
+            modifier = Modifier.fillMaxWidth(),
+            enabled = state.sttModelDownloaded,
+        ) {
             Text("Continue")
         }
         OutlinedButton(onClick = onSkip, modifier = Modifier.fillMaxWidth()) {

@@ -25,6 +25,10 @@ android {
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     buildTypes {
@@ -133,6 +137,9 @@ dependencies {
 
     // TensorFlow Lite (wake word)
     implementation(libs.tensorflow.lite)
+
+    // Sherpa-ONNX (on-device STT)
+    implementation(files("libs/sherpa-onnx.aar"))
 
     // Testing
     testImplementation(libs.junit5.api)

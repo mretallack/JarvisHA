@@ -38,6 +38,7 @@ fun SetupWizardNavHost(
         }
         composable(Routes.SETUP_MODEL_DOWNLOAD) {
             ModelDownloadScreen(
+                viewModel = viewModel,
                 onNext = { navController.navigate(Routes.SETUP_WAKE_WORD) },
                 onSkip = { navController.navigate(Routes.SETUP_WAKE_WORD) },
             )

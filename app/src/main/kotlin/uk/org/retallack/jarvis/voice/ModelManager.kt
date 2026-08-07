@@ -30,16 +30,14 @@ class ModelManager @Inject constructor(
         /** Directory within app internal storage for models. */
         private const val MODELS_DIR = "models"
 
-        // STT Model (Sherpa-ONNX streaming Zipformer)
-        // Placeholder URLs — update when selecting final model
-        private const val STT_MODEL_URL =
-            "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/main/encoder-epoch-99-avg-1-chunk-16-left-128.onnx"
-        private const val STT_DECODER_URL =
-            "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/main/decoder-epoch-99-avg-1-chunk-16-left-128.onnx"
-        private const val STT_JOINER_URL =
-            "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/main/joiner-epoch-99-avg-1-chunk-16-left-128.onnx"
-        private const val STT_TOKENS_URL =
-            "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/main/tokens.txt"
+        // STT Model (Sherpa-ONNX streaming Zipformer 20M, English)
+        // These are individual model files from the sherpa-onnx-streaming-zipformer-en-20M-2023-02-17 model
+        private const val STT_MODEL_BASE =
+            "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/main"
+        private const val STT_ENCODER_URL = "$STT_MODEL_BASE/encoder-epoch-99-avg-1.onnx"
+        private const val STT_DECODER_URL = "$STT_MODEL_BASE/decoder-epoch-99-avg-1.onnx"
+        private const val STT_JOINER_URL = "$STT_MODEL_BASE/joiner-epoch-99-avg-1.onnx"
+        private const val STT_TOKENS_URL = "$STT_MODEL_BASE/tokens.txt"
 
         // TTS Model (Piper via Sherpa-ONNX)
         // Placeholder URLs — update when selecting final voice
@@ -72,7 +70,7 @@ class ModelManager @Inject constructor(
 
     /** STT model files to download. */
     private val sttModelFiles = listOf(
-        ModelFile("encoder.onnx", STT_MODEL_URL),
+        ModelFile("encoder.onnx", STT_ENCODER_URL),
         ModelFile("decoder.onnx", STT_DECODER_URL),
         ModelFile("joiner.onnx", STT_JOINER_URL),
         ModelFile("tokens.txt", STT_TOKENS_URL),

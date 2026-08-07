@@ -56,22 +56,10 @@ fun VoiceScreen(
 
     // Permission launcher for RECORD_AUDIO (needed for mic tap)
     val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
     ) { isGranted ->
         if (isGranted) {
             viewModel.onMicTap()
-        }
-    }
-
-    // Speech recognition via Intent (works on all Android versions)
-    val speechLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        val text = uk.org.retallack.jarvis.voice.stt.SttIntentHelper.extractResult(
-            result.resultCode, result.data
-        )
-        if (text != null) {
-            viewModel.onSpeechResult(text)
         }
     }
 
@@ -79,7 +67,7 @@ fun VoiceScreen(
     val hasRecordPermission = {
         androidx.core.content.ContextCompat.checkSelfPermission(
             context,
-            android.Manifest.permission.RECORD_AUDIO
+            android.Manifest.permission.RECORD_AUDIO,
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
     }
     val partialText by viewModel.partialText.collectAsState()
@@ -99,9 +87,7 @@ fun VoiceScreen(
                 mode = mode,
                 onClick = {
                     if (hasRecordPermission()) {
-                        // Use intent-based speech recognition (works on all Android versions)
-                        val intent = uk.org.retallack.jarvis.voice.stt.SttIntentHelper.createRecognitionIntent()
-                        speechLauncher.launch(intent)
+                        viewModel.onMicTap()
                     } else {
                         permissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
                     }

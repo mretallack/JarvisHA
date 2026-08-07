@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import uk.org.retallack.jarvis.data.ha.HaClient
 import uk.org.retallack.jarvis.data.repository.ConnectionRepository
+import uk.org.retallack.jarvis.voice.ModelManager
 import javax.inject.Inject
 
 data class SetupUiState(
@@ -24,12 +25,17 @@ data class SetupUiState(
     val quietHoursStart: String = "22:00",
     val quietHoursEnd: String = "07:00",
     val setupComplete: Boolean = false,
+    val isDownloadingSttModel: Boolean = false,
+    val sttModelDownloaded: Boolean = false,
+    val sttDownloadProgress: Float = 0f,
+    val sttDownloadError: String? = null,
 )
 
 @HiltViewModel
 class SetupViewModel @Inject constructor(
     private val connectionRepository: ConnectionRepository,
     private val haClient: HaClient,
+    private val modelManager: ModelManager,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SetupUiState())
@@ -44,6 +50,10 @@ class SetupViewModel @Inject constructor(
                     haToken = config.token,
                 )
             }
+            // Check if models are already downloaded
+            _uiState.value = _uiState.value.copy(
+                sttModelDownloaded = modelManager.isSttModelAvailable(),
+            )
         }
     }
 
@@ -89,6 +99,40 @@ class SetupViewModel @Inject constructor(
                     isTestingConnection = false,
                     connectionSuccess = false,
                     connectionError = e.message ?: "Connection failed",
+                )
+            }
+        }
+    }
+
+    fun downloadSttModel() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                isDownloadingSttModel = true,
+                sttDownloadError = null,
+                sttDownloadProgress = 0f,
+            )
+            try {
+                modelManager.downloadSttModel().collect { progress ->
+                    _uiState.value = _uiState.value.copy(
+                        sttDownloadProgress = progress.progressFraction,
+                    )
+                    if (progress.isComplete) {
+                        _uiState.value = _uiState.value.copy(
+                            isDownloadingSttModel = false,
+                            sttModelDownloaded = true,
+                        )
+                    }
+                    if (progress.error != null) {
+                        _uiState.value = _uiState.value.copy(
+                            isDownloadingSttModel = false,
+                            sttDownloadError = progress.error,
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    isDownloadingSttModel = false,
+                    sttDownloadError = e.message ?: "Download failed",
                 )
             }
         }
