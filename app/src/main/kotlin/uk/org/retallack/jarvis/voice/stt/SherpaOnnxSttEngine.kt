@@ -288,21 +288,23 @@ class SherpaOnnxSttEngine @Inject constructor(
                         }
                     }
 
-                    // Also check endpoint for silence-only case
-                    if (rec.isEndpoint(currentStream)) {
-                        if (lastText.isNotEmpty()) {
-                            _results.tryEmit(
-                                SttResult(
-                                    text = lastText,
-                                    isFinal = true,
-                                    confidence = 1.0f,
-                                ),
-                            )
-                        }
+                    // Only check endpoint if we've previously had text
+                    // Don't stop recording just because there's initial silence
+                    if (lastText.isNotEmpty() && rec.isEndpoint(currentStream)) {
+                        _results.tryEmit(
+                            SttResult(
+                                text = lastText,
+                                isFinal = true,
+                                confidence = 1.0f,
+                            ),
+                        )
                         rec.reset(currentStream)
                         lastText = ""
                         _state.value = SttState.READY
                         break
+                    } else if (lastText.isEmpty() && rec.isEndpoint(currentStream)) {
+                        // Silence endpoint with no text — just reset the stream, keep listening
+                        rec.reset(currentStream)
                     }
                 }
             }
