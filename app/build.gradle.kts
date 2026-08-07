@@ -6,6 +6,7 @@ plugins {
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
     alias(libs.plugins.ktlint)
+    jacoco
 }
 
 ksp {
@@ -61,6 +62,12 @@ android {
                 "META-INF/LICENSE",
                 "META-INF/LICENSE.txt"
             )
+        }
+    }
+
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
         }
     }
 
@@ -121,6 +128,9 @@ dependencies {
     // Biometric
     implementation(libs.biometric)
 
+    // Security
+    implementation(libs.security.crypto)
+
     // TensorFlow Lite (wake word)
     implementation(libs.tensorflow.lite)
 
@@ -132,10 +142,48 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.room.testing)
+    testImplementation(libs.robolectric)
+    testRuntimeOnly(libs.junit.vintage.engine)
+    testImplementation(libs.test.core)
     androidTestImplementation(platform(libs.compose.bom))
     androidTestImplementation(libs.compose.ui.test.junit4)
 }
 
 tasks.withType<Test> {
     useJUnitPlatform()
+}
+
+jacoco {
+    toolVersion = libs.versions.jacoco.get()
+}
+
+tasks.register<JacocoReport>("jacocoTestReport") {
+    dependsOn("testDebugUnitTest")
+
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+        csv.required.set(false)
+    }
+
+    val classDirectories = fileTree("${layout.buildDirectory.get()}/tmp/kotlin-classes/debug") {
+        exclude(
+            "**/R.class",
+            "**/R\$*.class",
+            "**/BuildConfig.*",
+            "**/*_Hilt*.*",
+            "**/Hilt_*.*",
+            "**/*Module_*.*",
+            "**/*Factory*.*",
+            "**/*_MembersInjector.*",
+        )
+    }
+    val sourceDirectories = files("src/main/kotlin")
+    val executionData = fileTree(layout.buildDirectory.get()) {
+        include("jacoco/testDebugUnitTest.exec")
+    }
+
+    this.classDirectories.setFrom(classDirectories)
+    this.sourceDirectories.setFrom(sourceDirectories)
+    this.executionData.setFrom(executionData)
 }

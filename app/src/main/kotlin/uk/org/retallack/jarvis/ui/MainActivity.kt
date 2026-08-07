@@ -34,6 +34,7 @@ import uk.org.retallack.jarvis.ui.navigation.Routes
 import uk.org.retallack.jarvis.ui.settings.SettingsScreen
 import uk.org.retallack.jarvis.ui.setup.SetupWizardNavHost
 import uk.org.retallack.jarvis.ui.theme.JarvisTheme
+import uk.org.retallack.jarvis.ui.theme.ThemeMode
 import uk.org.retallack.jarvis.ui.voice.VoiceScreen
 
 @AndroidEntryPoint
@@ -42,9 +43,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            JarvisTheme {
-                JarvisApp()
-            }
+            JarvisApp()
         }
     }
 }
@@ -54,14 +53,17 @@ fun JarvisApp(
     viewModel: MainViewModel = hiltViewModel(),
 ) {
     val isSetupComplete by viewModel.isSetupComplete.collectAsState()
+    val themeMode by viewModel.themeMode.collectAsState()
     val navController = rememberNavController()
 
-    if (isSetupComplete) {
-        MainScreen(navController = navController)
-    } else {
-        SetupWizardNavHost(
-            onSetupComplete = { viewModel.markSetupComplete() },
-        )
+    JarvisTheme(themeMode = themeMode) {
+        if (isSetupComplete) {
+            MainScreen(navController = navController)
+        } else {
+            SetupWizardNavHost(
+                onSetupComplete = { viewModel.markSetupComplete() },
+            )
+        }
     }
 }
 
@@ -118,7 +120,11 @@ fun MainScreen(
             modifier = Modifier.padding(innerPadding),
         ) {
             composable(Routes.VOICE_TAB) {
-                VoiceScreen()
+                VoiceScreen(
+                    onEntityClick = { entityId ->
+                        navController.navigate(Routes.entityDetail(entityId))
+                    },
+                )
             }
             composable(Routes.ENTITIES_TAB) {
                 EntitiesScreen(

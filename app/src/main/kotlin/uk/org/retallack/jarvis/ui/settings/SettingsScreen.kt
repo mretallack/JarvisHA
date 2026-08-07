@@ -7,24 +7,33 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Nightlight
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import uk.org.retallack.jarvis.ui.theme.ThemeMode
 
 @Composable
 fun SettingsScreen(
@@ -32,6 +41,8 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    var showAgentDialog by remember { mutableStateOf(false) }
+    var showThemeDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -44,7 +55,7 @@ fun SettingsScreen(
             headlineContent = { Text("Home Assistant") },
             supportingContent = {
                 Text(
-                    if (state.isConnected) "Connected (${state.haVersion})" else "Not connected",
+                    if (state.isConnected) "Connected (${state.haVersion ?: state.haUrl})" else "Not connected",
                 )
             },
             leadingContent = { Icon(Icons.Filled.Wifi, contentDescription = null) },
@@ -70,6 +81,21 @@ fun SettingsScreen(
             },
             leadingContent = { Icon(Icons.Filled.RecordVoiceOver, contentDescription = null) },
             modifier = Modifier.clickable { },
+        )
+        HorizontalDivider()
+
+        // Conversation Agent
+        ListItem(
+            headlineContent = { Text("Conversation Agent") },
+            supportingContent = {
+                val agentName = state.availableAgents
+                    .find { it.id == state.selectedAgentId }?.name
+                    ?: state.selectedAgentId
+                    ?: "Default (Home Assistant)"
+                Text(agentName)
+            },
+            leadingContent = { Icon(Icons.Filled.SmartToy, contentDescription = null) },
+            modifier = Modifier.clickable { showAgentDialog = true },
         )
         HorizontalDivider()
 
@@ -112,6 +138,24 @@ fun SettingsScreen(
         )
         HorizontalDivider()
 
+        // Appearance
+        SettingsSection("Appearance")
+        ListItem(
+            headlineContent = { Text("Theme") },
+            supportingContent = {
+                Text(
+                    when (state.themeMode) {
+                        ThemeMode.SYSTEM -> "Follow system"
+                        ThemeMode.DARK -> "Dark"
+                        ThemeMode.LIGHT -> "Light"
+                    },
+                )
+            },
+            leadingContent = { Icon(Icons.Filled.Brightness6, contentDescription = null) },
+            modifier = Modifier.clickable { showThemeDialog = true },
+        )
+        HorizontalDivider()
+
         // About
         SettingsSection("About")
         ListItem(
@@ -120,6 +164,123 @@ fun SettingsScreen(
             leadingContent = { Icon(Icons.Filled.Info, contentDescription = null) },
         )
     }
+
+    // Agent selection dialog
+    if (showAgentDialog) {
+        AgentSelectionDialog(
+            agents = state.availableAgents,
+            selectedAgentId = state.selectedAgentId,
+            isLoading = state.isLoadingAgents,
+            onAgentSelected = { agentId ->
+                viewModel.selectAgent(agentId)
+                showAgentDialog = false
+            },
+            onDismiss = { showAgentDialog = false },
+        )
+    }
+
+    // Theme selection dialog
+    if (showThemeDialog) {
+        ThemeSelectionDialog(
+            currentMode = state.themeMode,
+            onModeSelected = { mode ->
+                viewModel.setThemeMode(mode)
+                showThemeDialog = false
+            },
+            onDismiss = { showThemeDialog = false },
+        )
+    }
+}
+
+@Composable
+private fun AgentSelectionDialog(
+    agents: List<ConversationAgent>,
+    selectedAgentId: String?,
+    isLoading: Boolean,
+    onAgentSelected: (String?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Conversation Agent") },
+        text = {
+            Column {
+                if (isLoading) {
+                    Text("Loading agents...")
+                } else if (agents.isEmpty()) {
+                    Text("No conversation agents found. Make sure Home Assistant is connected.")
+                } else {
+                    // Default option
+                    ListItem(
+                        headlineContent = { Text("Default (Home Assistant)") },
+                        leadingContent = {
+                            RadioButton(
+                                selected = selectedAgentId == null,
+                                onClick = { onAgentSelected(null) },
+                            )
+                        },
+                        modifier = Modifier.clickable { onAgentSelected(null) },
+                    )
+                    agents.forEach { agent ->
+                        ListItem(
+                            headlineContent = { Text(agent.name) },
+                            supportingContent = { Text(agent.id) },
+                            leadingContent = {
+                                RadioButton(
+                                    selected = selectedAgentId == agent.id,
+                                    onClick = { onAgentSelected(agent.id) },
+                                )
+                            },
+                            modifier = Modifier.clickable { onAgentSelected(agent.id) },
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        },
+    )
+}
+
+@Composable
+private fun ThemeSelectionDialog(
+    currentMode: ThemeMode,
+    onModeSelected: (ThemeMode) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Theme") },
+        text = {
+            Column {
+                ThemeMode.entries.forEach { mode ->
+                    val label = when (mode) {
+                        ThemeMode.SYSTEM -> "Follow system"
+                        ThemeMode.DARK -> "Dark"
+                        ThemeMode.LIGHT -> "Light"
+                    }
+                    ListItem(
+                        headlineContent = { Text(label) },
+                        leadingContent = {
+                            RadioButton(
+                                selected = currentMode == mode,
+                                onClick = { onModeSelected(mode) },
+                            )
+                        },
+                        modifier = Modifier.clickable { onModeSelected(mode) },
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        },
+    )
 }
 
 @Composable

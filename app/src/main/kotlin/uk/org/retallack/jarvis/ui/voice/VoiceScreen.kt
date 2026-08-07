@@ -11,10 +11,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -22,12 +20,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LargeFloatingActionButton
 import androidx.compose.material3.MaterialTheme
@@ -40,12 +38,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 
 @Composable
 fun VoiceScreen(
     modifier: Modifier = Modifier,
+    onEntityClick: ((String) -> Unit)? = null,
     viewModel: VoiceViewModel = hiltViewModel(),
 ) {
     val messages by viewModel.messages.collectAsState()
@@ -98,7 +101,10 @@ fun VoiceScreen(
                     }
                 }
                 items(messages, key = { it.id }) { message ->
-                    ChatBubble(message = message)
+                    ChatBubble(
+                        message = message,
+                        onEntityClick = onEntityClick,
+                    )
                 }
             }
 
@@ -177,9 +183,9 @@ private fun MicFab(
 @Composable
 private fun ChatBubble(
     message: ChatMessage,
+    onEntityClick: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
-    val alignment = if (message.isUser) Alignment.End else Alignment.Start
     val bubbleColor = when {
         message.isError -> MaterialTheme.colorScheme.errorContainer
         message.isUser -> MaterialTheme.colorScheme.primaryContainer
@@ -190,6 +196,7 @@ private fun ChatBubble(
         message.isUser -> MaterialTheme.colorScheme.onPrimaryContainer
         else -> MaterialTheme.colorScheme.onSecondaryContainer
     }
+    val linkColor = MaterialTheme.colorScheme.primary
 
     Row(
         modifier = modifier.fillMaxWidth(),
@@ -205,12 +212,73 @@ private fun ChatBubble(
             ),
             modifier = Modifier.fillMaxWidth(0.8f),
         ) {
-            Text(
-                text = message.text,
-                style = MaterialTheme.typography.bodyLarge,
-                color = textColor,
-                modifier = Modifier.padding(12.dp),
-            )
+            if (!message.isUser && message.entityIds.isNotEmpty() && onEntityClick != null) {
+                // Render text with tappable entity names
+                val annotatedString = buildAnnotatedString {
+                    var currentPos = 0
+                    val text = message.text
+
+                    // Find entity name positions in the text
+                    val entityMatches = message.entityNames.mapIndexedNotNull { index, name ->
+                        val start = text.indexOf(name, currentPos, ignoreCase = true)
+                        if (start >= 0 && index < message.entityIds.size) {
+                            Triple(start, start + name.length, message.entityIds[index])
+                        } else {
+                            null
+                        }
+                    }.sortedBy { it.first }
+
+                    for (match in entityMatches) {
+                        // Append text before entity name
+                        if (match.first > currentPos) {
+                            withStyle(SpanStyle(color = textColor)) {
+                                append(text.substring(currentPos, match.first))
+                            }
+                        }
+                        // Append entity name as clickable
+                        pushStringAnnotation(tag = "entity", annotation = match.third)
+                        withStyle(
+                            SpanStyle(
+                                color = linkColor,
+                                textDecoration = TextDecoration.Underline,
+                            ),
+                        ) {
+                            append(text.substring(match.first, match.second))
+                        }
+                        pop()
+                        currentPos = match.second
+                    }
+
+                    // Append remaining text
+                    if (currentPos < text.length) {
+                        withStyle(SpanStyle(color = textColor)) {
+                            append(text.substring(currentPos))
+                        }
+                    }
+                }
+
+                ClickableText(
+                    text = annotatedString,
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(12.dp),
+                    onClick = { offset ->
+                        annotatedString.getStringAnnotations(
+                            tag = "entity",
+                            start = offset,
+                            end = offset,
+                        ).firstOrNull()?.let { annotation ->
+                            onEntityClick(annotation.item)
+                        }
+                    },
+                )
+            } else {
+                Text(
+                    text = message.text,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = textColor,
+                    modifier = Modifier.padding(12.dp),
+                )
+            }
         }
     }
 }

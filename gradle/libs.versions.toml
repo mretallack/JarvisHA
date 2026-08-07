@@ -14,6 +14,7 @@ sherpa-onnx = "1.10.35"
 tensorflow-lite = "2.16.1"
 kotlinx-serialization = "1.7.3"
 biometric = "1.2.0-alpha05"
+security-crypto = "1.1.0-alpha06"
 core-ktx = "1.15.0"
 lifecycle = "2.8.7"
 activity-compose = "1.9.3"
@@ -23,6 +24,7 @@ mockk = "1.13.13"
 turbine = "1.2.0"
 jacoco = "0.8.12"
 ktlint = "12.1.2"
+robolectric = "4.13"
 
 [libraries]
 # Core Android
@@ -71,6 +73,9 @@ kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serializa
 # Biometric
 biometric = { module = "androidx.biometric:biometric", version.ref = "biometric" }
 
+# Security
+security-crypto = { module = "androidx.security:security-crypto", version.ref = "security-crypto" }
+
 # TensorFlow Lite (LiteRT) for wake word
 tensorflow-lite = { module = "org.tensorflow:tensorflow-lite", version.ref = "tensorflow-lite" }
 
@@ -80,6 +85,9 @@ junit5-engine = { module = "org.junit.jupiter:junit-jupiter-engine", version.ref
 mockk = { module = "io.mockk:mockk", version.ref = "mockk" }
 turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version = "1.9.0" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
+junit-vintage-engine = { module = "org.junit.vintage:junit-vintage-engine", version.ref = "junit5" }
+test-core = { module = "androidx.test:core", version = "1.6.1" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

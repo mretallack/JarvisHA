@@ -10,7 +10,7 @@
 - [x] 1.6 Set up module/package structure per design doc
 - [x] 1.7 Add ktlint and Android lint configuration
 - [x] 1.8 Verify CI pipeline runs (lint + empty test pass + APK builds)
-- [ ] 1.9 Add JaCoCo coverage configuration
+- [x] 1.9 Add JaCoCo coverage configuration
 
 ## Phase 2: HA Connection
 
@@ -21,9 +21,9 @@
 - [x] 2.5 Implement WebSocket event subscription (`state_changed`)
 - [x] 2.6 Implement entity registry fetch via WebSocket (`config/entity_registry/list_for_display`)
 - [x] 2.7 Implement area registry fetch (`config/area_registry/list`)
-- [ ] 2.8 Implement token storage in Android Keystore
-- [ ] 2.9 Write unit tests: connection validation, WebSocket auth flow
-- [ ] 2.10 Write integration tests: MockWebServer for REST, mock WebSocket for event subscription
+- [x] 2.8 Implement token storage in Android Keystore
+- [x] 2.9 Write unit tests: connection validation, WebSocket auth flow
+- [x] 2.10 Write integration tests: MockWebServer for REST, mock WebSocket for event subscription
 
 ## Phase 3: Entity Management
 
@@ -33,7 +33,7 @@
 - [x] 3.4 Implement alias management — push to HA via `config/entity_registry/update`
 - [x] 3.5 Implement alias sync from HA (pull current aliases into local cache)
 - [x] 3.6 Write unit tests: entity cache CRUD, alias push logic
-- [ ] 3.7 Write integration tests: Room queries, WebSocket registry fetch mock
+- [x] 3.7 Write integration tests: Room queries, WebSocket registry fetch mock
 
 ## Phase 4: Voice Pipeline — STT
 
@@ -75,7 +75,7 @@
 - [x] 7.4 Implement agent selection (default `conversation.home_assistant`, configurable)
 - [x] 7.5 Implement error handling: `no_valid_targets`, `no_intent_match`, connection errors
 - [x] 7.6 Write unit tests: response parsing, multi-turn state, error mapping
-- [ ] 7.7 Write integration tests: MockWebServer conversation round-trips
+- [x] 7.7 Write integration tests: MockWebServer conversation round-trips
 
 ## Phase 8: UI — Setup Wizard
 
@@ -96,7 +96,7 @@
 - [x] 9.3 Implement mic FAB button with state indicator (idle/listening/processing/speaking)
 - [x] 9.4 Implement real-time partial STT text display
 - [x] 9.5 Implement response rendering (HA speech text, affected entities)
-- [ ] 9.6 Make entity names in responses tappable → navigate to entity detail
+- [x] 9.6 Make entity names in responses tappable → navigate to entity detail
 - [x] 9.7 Implement waveform/pulse animation during listening
 - [x] 9.8 Implement error state display ("HA unavailable", "command not understood")
 - [ ] 9.9 Write UI tests: message display, state transitions
@@ -117,9 +117,9 @@
 - [x] 11.2 Connection settings (edit URL, token, test)
 - [x] 11.3 Voice settings (STT model info, TTS voice info, download status)
 - [x] 11.4 Wake word settings (enable/disable, sensitivity slider, quiet hours)
-- [ ] 11.5 Conversation agent selector (list agents from HA, show latency indication)
+- [x] 11.5 Conversation agent selector (list agents from HA, show latency indication)
 - [x] 11.6 Security settings (sensitive domain list, biometric toggle)
-- [ ] 11.7 Theme selection (system/dark/light)
+- [x] 11.7 Theme selection (system/dark/light)
 - [x] 11.8 About screen (version, licenses, links)
 
 ## Phase 12: Export / Import
@@ -131,7 +131,7 @@
 - [x] 12.5 Exclude access token from export
 - [x] 12.6 Include schema version for forward compatibility
 - [x] 12.7 Write unit tests: serialisation round-trip, schema validation
-- [ ] 12.8 Write integration tests: full export → import → verify state
+- [x] 12.8 Write integration tests: full export → import → verify state
 
 ## Phase 13: Lock Screen & Security
 

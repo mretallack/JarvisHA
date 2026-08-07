@@ -16,9 +16,7 @@ import uk.org.retallack.jarvis.data.repository.ConversationRepository
 import uk.org.retallack.jarvis.data.repository.ConversationResult
 import uk.org.retallack.jarvis.voice.stt.SttEngine
 import uk.org.retallack.jarvis.voice.stt.SttResult
-import uk.org.retallack.jarvis.voice.stt.SttState
 import uk.org.retallack.jarvis.voice.tts.TtsEngine
-import uk.org.retallack.jarvis.voice.tts.TtsState
 import javax.inject.Inject
 
 enum class VoiceUiMode {
@@ -35,6 +33,8 @@ data class ChatMessage(
     val isUser: Boolean,
     val timestamp: Long = System.currentTimeMillis(),
     val isError: Boolean = false,
+    val entityIds: List<String> = emptyList(),
+    val entityNames: List<String> = emptyList(),
 )
 
 @HiltViewModel
@@ -51,15 +51,21 @@ class VoiceViewModel @Inject constructor(
     private val _partialText = MutableStateFlow("")
     val partialText: StateFlow<String> = _partialText.asStateFlow()
 
+    // Track entity info for response messages (msgId -> (entityIds, entityNames))
+    private val responseEntityInfo = mutableMapOf<Long, Pair<List<String>, List<String>>>()
+
     val messages: StateFlow<List<ChatMessage>> = messageDao.getRecentMessages(50)
         .map { messages ->
             messages.map { msg ->
+                val entityInfo = responseEntityInfo[msg.id]
                 ChatMessage(
                     id = msg.id,
                     text = msg.text,
                     isUser = msg.isUser,
                     timestamp = msg.timestamp,
                     isError = msg.isError,
+                    entityIds = entityInfo?.first ?: emptyList(),
+                    entityNames = entityInfo?.second ?: emptyList(),
                 )
             }.reversed() // Show oldest first
         }
@@ -133,9 +139,19 @@ class VoiceViewModel @Inject constructor(
             when (result) {
                 is ConversationResult.Success -> {
                     val responseText = result.speechText ?: "Done"
+
+                    // Extract entity info from response data
+                    val successTargets = result.response.response.data?.success ?: emptyList()
+                    val entityIds = successTargets.mapNotNull { it.id }
+                    val entityNames = successTargets.mapNotNull { it.name }
+
                     messageDao.insert(
                         ConversationMessageDb(text = responseText, isUser = false),
                     )
+
+                    // Store entity info for the most recent message mapping
+                    val msgId = messageDao.getCount().toLong()
+                    responseEntityInfo[msgId] = entityIds to entityNames
 
                     // Only speak if triggered by wake word
                     if (wakeWordTriggered && responseText.isNotBlank()) {
