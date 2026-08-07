@@ -74,7 +74,15 @@ class VoiceViewModel @Inject constructor(
     private var wakeWordTriggered = false
 
     init {
+        initializeEngines()
         observeSttResults()
+    }
+
+    private fun initializeEngines() {
+        viewModelScope.launch {
+            sttEngine.initialize("")
+            ttsEngine.initialize("")
+        }
     }
 
     private fun observeSttResults() {

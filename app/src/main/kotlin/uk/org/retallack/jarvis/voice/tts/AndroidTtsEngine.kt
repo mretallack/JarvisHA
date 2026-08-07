@@ -149,7 +149,7 @@ class AndroidTtsEngine @Inject constructor(
     }
 
     override fun isModelAvailable(modelPath: String): Boolean {
-        // Android TTS doesn't need local models
-        return isInitialized
+        // Android TTS doesn't need local models - available if system has a TTS engine
+        return true
     }
 }

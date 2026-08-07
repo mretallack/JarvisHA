@@ -70,7 +70,7 @@ fun SettingsScreen(
         ListItem(
             headlineContent = { Text("Speech Recognition") },
             supportingContent = {
-                Text(if (state.sttModelAvailable) "Model loaded" else "Model not available")
+                Text(if (state.sttModelAvailable) "Speech recognition ready" else "Speech recognition not initialised")
             },
             leadingContent = {
                 Icon(Icons.Filled.Mic, contentDescription = "Speech recognition settings")
@@ -81,7 +81,7 @@ fun SettingsScreen(
         ListItem(
             headlineContent = { Text("Text to Speech") },
             supportingContent = {
-                Text(if (state.ttsModelAvailable) "Model loaded" else "Model not available")
+                Text(if (state.ttsModelAvailable) "Text-to-speech ready" else "Text-to-speech not initialised")
             },
             leadingContent = {
                 Icon(Icons.Filled.RecordVoiceOver, contentDescription = "Text to speech settings")
