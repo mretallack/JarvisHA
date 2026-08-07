@@ -212,6 +212,14 @@ class SherpaOnnxSttEngine @Inject constructor(
         try {
             val currentStream = stream ?: return
 
+            // Feed a small pre-buffer of silence to warm up the recognizer
+            // This prevents the first word from being missed
+            val silenceBuffer = FloatArray(CHUNK_SIZE) { 0.0f }
+            currentStream.acceptWaveform(silenceBuffer, SAMPLE_RATE)
+            while (rec.isReady(currentStream)) {
+                rec.decode(currentStream)
+            }
+
             while (currentCoroutineContext().isActive && _state.value == SttState.LISTENING) {
                 val shortsRead = record.read(shortBuffer, 0, CHUNK_SIZE)
                 if (shortsRead <= 0) {
