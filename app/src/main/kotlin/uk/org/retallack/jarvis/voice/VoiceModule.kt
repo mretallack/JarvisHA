@@ -4,9 +4,9 @@ import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
-import uk.org.retallack.jarvis.voice.stt.MockSttEngine
+import uk.org.retallack.jarvis.voice.stt.AndroidSpeechRecognizerSttEngine
 import uk.org.retallack.jarvis.voice.stt.SttEngine
-import uk.org.retallack.jarvis.voice.tts.MockTtsEngine
+import uk.org.retallack.jarvis.voice.tts.AndroidTtsEngine
 import uk.org.retallack.jarvis.voice.tts.TtsEngine
 import uk.org.retallack.jarvis.voice.wakeword.MockWakeWordEngine
 import uk.org.retallack.jarvis.voice.wakeword.WakeWordEngine
@@ -14,8 +14,8 @@ import javax.inject.Singleton
 
 /**
  * DI module that provides voice pipeline bindings.
- * Uses mock implementations during development.
- * Swap to real implementations (SherpaOnnxSttEngine, etc.) when device testing.
+ * Uses Android system APIs for STT/TTS (SpeechRecognizer + TextToSpeech).
+ * Mock implementations remain available for unit testing via direct instantiation.
  */
 @Module
 @InstallIn(SingletonComponent::class)
@@ -23,11 +23,11 @@ abstract class VoiceModule {
 
     @Binds
     @Singleton
-    abstract fun bindSttEngine(impl: MockSttEngine): SttEngine
+    abstract fun bindSttEngine(impl: AndroidSpeechRecognizerSttEngine): SttEngine
 
     @Binds
     @Singleton
-    abstract fun bindTtsEngine(impl: MockTtsEngine): TtsEngine
+    abstract fun bindTtsEngine(impl: AndroidTtsEngine): TtsEngine
 
     @Binds
     @Singleton

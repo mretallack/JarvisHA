@@ -21,10 +21,10 @@ The following architectural decisions have been validated against a live HA inst
 |---|---|---|
 | App purpose | Voice assistant only | Not a dashboard — Companion app handles visual control |
 | Package name | `uk.org.retallack.jarvis` | Developer-owned domain |
-| STT engine | Sherpa-ONNX (streaming zipformer) | Single library for STT + TTS, actively maintained |
-| TTS engine | Piper via Sherpa-ONNX | Same library, neural quality offline |
+| STT engine | Android `SpeechRecognizer` API (primary) | Uses whatever STT is installed (Whisper, FUTO, Vosk). No model download needed. Sherpa-ONNX as built-in fallback. |
+| TTS engine | Android `TextToSpeech` API | Uses system TTS engine (eSpeak-NG, RHVoice, etc.). Zero code to maintain. Same as Dicio. |
 | Wake word | OpenWakeWord TFLite ("Hey Jarvis" bundled) | Proven, ~2MB model |
-| Model delivery | Download from upstream on first launch | Small APK, F-Droid compliant with consent |
+| Model delivery | No downloads needed for STT/TTS (uses system services). Sherpa-ONNX fallback downloads from upstream if needed. | Small APK, instant voice on first launch |
 | Connection | Single URL | External HTTPS fast enough (~185ms), simplifies v1.0 |
 | Conversation agent | Default `conversation.home_assistant` | 185ms vs 55s (Ollama), configurable in settings |
 | Intent processing | HA Conversation API only | No local matching — if HA is down, show error |
@@ -42,7 +42,7 @@ The following architectural decisions have been validated against a live HA inst
 Setup Wizard (first launch only)
     ├── Welcome
     ├── HA Connection (URL + token + test)
-    ├── Download Models (STT + TTS, consent + progress)
+    ├── Check STT/TTS Services (verify installed, offer fallback if needed)
     ├── Wake Word (opt-in + battery warning)
     ├── Quiet Hours (optional, if wake word enabled)
     └── Done
@@ -64,7 +64,7 @@ Main App (two tabs)
 
 Settings (gear icon)
     ├── Connection (URL, token, test)
-    ├── Voice (STT model info, TTS voice)
+    ├── Voice (STT service selection, TTS settings)
     ├── Wake Word (enable/disable, sensitivity, quiet hours)
     ├── Conversation Agent (select, show latency)
     ├── Security (sensitive domains, biometric)
@@ -101,9 +101,9 @@ Settings (gear icon)
 | Networking | OkHttp 5 + Retrofit | Battle-tested, native WebSocket support |
 | Local DB | Room | Entity cache, conversation history, notifications |
 | Preferences | Protobuf DataStore | Type-safe, async, structured settings |
-| STT | Sherpa-ONNX / Vosk | Offline, no Google dependency |
-| TTS | Sherpa-ONNX (Piper models) / eSpeak-NG | Offline neural TTS |
-| Wake Word | OpenWakeWord via LiteRT | TFLite model inference |
+| STT | Android `SpeechRecognizer` API (Sherpa-ONNX fallback) | Uses installed services (Whisper, FUTO, Vosk) |
+| TTS | Android `TextToSpeech` API | Uses system TTS, no models needed |
+| Wake Word | OpenWakeWord via LiteRT | TFLite models bundled (~2.7MB) |
 | Serialisation | Kotlinx Serialization | JSON export/import, API responses |
 | Testing | JUnit5 + Turbine + MockK | Kotlin-native mocking, Flow testing |
 | Build | Gradle (Kotlin DSL) | Standard Android build |
@@ -271,8 +271,9 @@ The voice pipeline is modular — each stage (wake word, STT, intent, TTS) has a
 └──────────┘    └─────┘    └────────────────────┘    └─────┘    └─────────┘
      │              │              │                       │
      │              │              │                       │
-  TFLite        Sherpa-ONNX    HA REST/WS             Sherpa-ONNX
-  Model         or Vosk        or Local Fallback      (Piper) or eSpeak
+  TFLite        Android        HA REST/WS             Android
+  Model         SpeechRecognizer  or Local Fallback   TextToSpeech
+                (Sherpa-ONNX fallback)
 ```
 
 #### STT Engine Interface
@@ -297,9 +298,8 @@ sealed class SttResult {
 ```
 
 Implementations:
-- `VoskSttEngine` — Offline, streaming, ~50MB model
-- `SherpaOnnxSttEngine` — Offline, streaming (zipformer) or batch (whisper)
-- `HaWyomingSttEngine` — Server-side via Assist Pipeline WebSocket
+- `AndroidSpeechRecognizerSttEngine` — Primary, uses installed Android recognition service (Whisper, FUTO, Vosk, etc.)
+- `SherpaOnnxSttEngine` — Fallback, offline, streaming (zipformer) or batch (whisper), requires model download
 
 #### TTS Engine Interface
 
@@ -323,9 +323,7 @@ sealed class TtsState {
 ```
 
 Implementations:
-- `SherpaOnnxTtsEngine` — Piper VITS models, offline neural TTS
-- `ESpeakTtsEngine` — Lightweight fallback, always available
-- `HaWyomingTtsEngine` — Server-side via Assist Pipeline
+- `AndroidTtsEngine` — Primary, uses system TTS engine (eSpeak-NG, RHVoice, Piper TTS, etc.). No library dependency.
 
 #### Wake Word Engine
 
@@ -529,8 +527,8 @@ No manual mapping required. The HA Conversation API handles entity resolution by
     ]
   },
   "preferences": {
-    "stt_engine": "sherpa_onnx",
-    "tts_engine": "piper",
+    "stt_engine": "android_speech_recognizer",
+    "tts_engine": "android_tts",
     "wake_word_enabled": true,
     "wake_word_sensitivity": 0.5,
     "theme": "system",
@@ -610,13 +608,13 @@ User says "Hey Jarvis, turn off the living room lights"
 
 1. WakeWordService detects "Hey Jarvis" via TFLite model
 2. Service broadcasts wake detection → Voice UI activates
-3. STT engine starts listening (Sherpa-ONNX streaming)
+3. STT engine starts listening (Android SpeechRecognizer)
 4. Partial results displayed: "turn off the..." → "turn off the living room..." → "turn off the living room lights"
 5. VAD detects silence → final transcription produced
 6. Text sent to HA Conversation API: POST conversation/process { text: "turn off the living room lights" }
 7. HA resolves intent, calls light.turn_off for area "living_room"
 8. Response received: { speech: "Turned off 3 lights", type: "action_done" }
-9. TTS engine speaks response (Piper)
+9. TTS engine speaks response (Android TextToSpeech)
 10. Dashboard updates via WebSocket state_changed events (lights show "off")
 ```
 
@@ -628,7 +626,7 @@ User says "Hey Jarvis, turn off the living room lights"
 User says "Hey Jarvis, turn off the kitchen"
 (HA server unreachable)
 
-1. Wake word detected → STT activates (Sherpa-ONNX, works offline)
+1. Wake word detected → STT activates (Android SpeechRecognizer — works offline if installed service supports it)
 2. Transcription: "turn off the kitchen"
 3. HA Conversation API call fails (connection refused)
 4. Fallback to LocalIntentMatcher:
@@ -653,7 +651,7 @@ User says "Hey Jarvis, turn off the kitchen"
 | Favourites & aliases | Room | User-defined favourites, voice aliases |
 | Quick actions | Protobuf DataStore | User-defined quick action buttons |
 | Secrets | Android Keystore | HA access token |
-| STT/TTS models | App internal storage | Downloaded Vosk/Sherpa-ONNX/Piper models |
+| STT/TTS models | App internal storage | Sherpa-ONNX model (only if fallback used) |
 | Wake word models | App assets + internal storage | Bundled Hey Jarvis + custom models |
 
 ---
@@ -699,14 +697,10 @@ kapt("androidx.room:room-compiler:2.6.1")
 implementation("androidx.datastore:datastore:1.1.1")
 implementation("com.google.protobuf:protobuf-javalite:4.27.3")
 
-// STT
-implementation("com.k2fsa.sherpa:sherpa-onnx-android:x.y.z")
-// OR
-implementation("com.alphacephei:vosk-android:0.3.47")
+// STT (optional fallback only — primary uses Android SpeechRecognizer API, no library needed)
+// implementation("com.k2fsa.sherpa:sherpa-onnx-android:x.y.z")  // optional fallback
 
-// TTS  
-// Sherpa-ONNX (same library as STT - includes TTS support)
-// eSpeak-NG bundled as native library
+// TTS — uses Android TextToSpeech API, no library dependency
 
 // Wake Word
 implementation("org.tensorflow:tensorflow-lite:2.16.1")  // LiteRT

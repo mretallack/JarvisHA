@@ -25,9 +25,9 @@ JarvisHA is an Android voice assistant application purpose-built for controlling
 |---|---|
 | Connection setup | Single URL + token, test connection, setup wizard |
 | Voice command | Tap mic button or wake word → STT → HA Conversation API → TTS response |
-| STT | Sherpa-ONNX only (streaming zipformer), downloaded on first launch |
-| TTS | Piper via Sherpa-ONNX, downloaded on first launch. Speak on wake word activation only; text-only response on mic tap |
-| Wake word | "Hey Jarvis" TFLite model bundled, opt-in during setup with battery warning |
+| STT | Android `SpeechRecognizer` API (uses whatever STT service is installed — Whisper, Vosk, FUTO Voice Input, etc.). Sherpa-ONNX as built-in fallback if no service available. |
+| TTS | Android `TextToSpeech` API (uses whatever TTS engine is installed — eSpeak-NG, RHVoice, Piper TTS, etc.). No bundled models needed. Speak on wake word activation only; text-only response on mic tap. |
+| Wake word | "Hey Jarvis" TFLite model bundled (OpenWakeWord), opt-in during setup with battery warning |
 | Quiet hours | Configurable schedule to disable wake word |
 | Entity discovery | Auto-discover all entities from HA, browseable |
 | Entity aliases | Add voice shortcuts in-app, push to HA via WebSocket, local cache for display |
@@ -50,7 +50,6 @@ JarvisHA is an Android voice assistant application purpose-built for controlling
 - Notifications from HA
 - Offline fallback intent matching / command queue
 - Local + external URL auto-switching
-- Vosk STT engine (second option)
 - Multiple languages / model selection
 - Voice PIN for sensitive commands
 - Custom quick actions
@@ -121,155 +120,106 @@ As a user, I want real-time updates from my HA instance so that the app always s
 
 ## 2. Voice Input (Speech-to-Text)
 
-### User Story 2.1: Local STT with Vosk
+### User Story 2.1: STT via Android SpeechRecognizer API
 
-As a user, I want offline speech recognition so that voice commands work without internet access.
-
-**Acceptance Criteria:**
-
-- [ ] App bundles or downloads Vosk small model (~50MB) for English
-- [ ] Real-time streaming recognition with partial results displayed as user speaks
-- [ ] Recognition completes within 500ms of user stopping speech
-- [ ] Works fully offline with no network connectivity
-- [ ] User can download additional language models
-
-**Requirements (EARS):**
-
-- WHEN the user selects Vosk as the STT engine, THE SYSTEM SHALL perform all speech recognition locally on the device without any network requests.
-- WHEN Vosk is active and the user speaks, THE SYSTEM SHALL display partial recognition results in real-time (streaming mode).
-- WHEN voice activity ends (VAD detects silence), THE SYSTEM SHALL produce a final transcription within 500ms.
-- THE SYSTEM SHALL support downloading and managing multiple Vosk language models.
-
-### User Story 2.2: Local STT with Sherpa-ONNX
-
-As a user, I want high-accuracy offline speech recognition using modern models so that my commands are understood correctly.
+As a user, I want speech recognition to use whatever STT service I have installed on my phone so I don't need to download additional models.
 
 **Acceptance Criteria:**
 
-- [ ] App integrates Sherpa-ONNX library for on-device STT
-- [ ] Supports streaming models (zipformer) for real-time recognition
-- [ ] Supports non-streaming models (Whisper tiny/base) for higher accuracy
-- [ ] User can select between speed-optimised and accuracy-optimised models
-- [ ] Model manager allows downloading/deleting models
+- [ ] App uses Android's standard `SpeechRecognizer` API to get speech input
+- [ ] Works with any installed recognition service (Whisper, FUTO Voice Input, Vosk, Dicio, HA Companion)
+- [ ] User can select which installed recognition service to use in settings
+- [ ] Partial results displayed as user speaks (if the provider supports it)
+- [ ] No mandatory model downloads — uses what's already on the phone
+- [ ] Works fully offline if the selected recognition service supports offline (e.g., Whisper, Vosk)
 
 **Requirements (EARS):**
 
-- WHEN the user selects Sherpa-ONNX as the STT engine, THE SYSTEM SHALL perform speech recognition using the selected ONNX model locally on the device.
-- WHEN a streaming model (zipformer) is selected, THE SYSTEM SHALL provide real-time partial transcription results as the user speaks.
-- WHEN a non-streaming model (Whisper) is selected, THE SYSTEM SHALL process the complete utterance after VAD detects end-of-speech and return results within 3 seconds on a mid-range device.
-- THE SYSTEM SHALL provide a model manager UI showing available models with size, language, and accuracy/speed trade-off information.
+- THE SYSTEM SHALL use Android's `SpeechRecognizer` API as the primary STT mechanism.
+- WHEN multiple recognition services are installed, THE SYSTEM SHALL list them in settings and allow the user to select one.
+- WHEN no recognition service is installed, THE SYSTEM SHALL display a message directing the user to install one (e.g., FUTO Voice Input or Whisper from F-Droid).
+- WHEN the selected recognition service provides partial results, THE SYSTEM SHALL display them in real-time.
+- THE SYSTEM SHALL NOT require Google Play Services for speech recognition — only FOSS-compatible recognition services are listed.
 
-### User Story 2.3: Server-side STT via HA Wyoming/Assist Pipeline
+### User Story 2.2: Sherpa-ONNX Fallback STT (Optional)
 
-As a user, I want to optionally use my HA server's faster-whisper for STT so I get the best accuracy when on my home network.
+As a user, I want a built-in STT option in case I don't have a separate speech recognition app installed.
 
 **Acceptance Criteria:**
 
-- [ ] App can stream audio to HA via the Assist Pipeline WebSocket API (`assist_pipeline/run` with `start_stage: "stt"`)
-- [ ] Audio streamed as binary WebSocket frames with handler ID prefix
-- [ ] Receives `stt-end` event with transcribed text
-- [ ] Falls back to local STT if HA connection is unavailable
-- [ ] User can configure preferred pipeline in settings
+- [ ] App offers Sherpa-ONNX as a built-in STT option (requires model download)
+- [ ] Model download is opt-in, clearly explained with size and purpose
+- [ ] Downloads from upstream (HuggingFace) with progress indicator
+- [ ] Once downloaded, works fully offline
 
 **Requirements (EARS):**
 
-- WHEN the user selects HA Wyoming/Pipeline as the STT engine AND the HA WebSocket connection is active, THE SYSTEM SHALL stream microphone audio to HA using `assist_pipeline/run` with `start_stage: "stt"` and `end_stage: "intent"`.
-- WHEN audio is being streamed, THE SYSTEM SHALL prefix each binary WebSocket frame with the `stt_binary_handler_id` received in the `run-start` event.
-- WHEN the HA server returns an `stt-end` event, THE SYSTEM SHALL extract the transcribed text from `stt_output.text`.
-- WHEN the HA connection is unavailable AND server-side STT is selected, THE SYSTEM SHALL automatically fall back to the configured local STT engine and notify the user of the fallback.
+- WHEN no Android recognition service is available AND the user has not downloaded the built-in model, THE SYSTEM SHALL offer to download the Sherpa-ONNX model as a fallback.
+- WHEN the user opts to download the built-in model, THE SYSTEM SHALL download from upstream with a progress indicator and clear consent.
+- THE SYSTEM SHALL treat the built-in Sherpa-ONNX engine as a fallback — Android SpeechRecognizer is preferred when available.
 
-### User Story 2.4: STT Engine Selection
+### User Story 2.3: STT Engine Selection
 
-As a user, I want to choose and switch between STT engines so I can balance accuracy, speed, and network usage.
+As a user, I want to choose which speech recognition service to use.
 
 **Acceptance Criteria:**
 
-- [ ] Settings screen lists all available STT engines (Vosk, Sherpa-ONNX, HA Wyoming)
-- [ ] User can set a primary and fallback STT engine
-- [ ] App indicates which engines are available offline vs require network
-- [ ] Switching engines does not require app restart
+- [ ] Settings screen lists all installed Android recognition services
+- [ ] Shows service name and package (e.g., "Whisper (org.woheller69.whisper)")
+- [ ] Option for built-in Sherpa-ONNX (if model downloaded)
+- [ ] Switching does not require app restart
 
 **Requirements (EARS):**
 
-- THE SYSTEM SHALL provide a settings UI to select the primary STT engine from: Vosk, Sherpa-ONNX (streaming), Sherpa-ONNX (Whisper), HA Wyoming Pipeline.
+- THE SYSTEM SHALL provide a settings UI to list all installed Android recognition services and the built-in Sherpa-ONNX fallback.
 - THE SYSTEM SHALL allow configuration of a fallback STT engine that activates when the primary engine is unavailable.
 - WHEN the primary STT engine fails to initialise or becomes unavailable, THE SYSTEM SHALL switch to the fallback engine within 2 seconds and display a notification.
-- THE SYSTEM SHALL clearly label each engine option with: offline capability, expected accuracy level, and model size requirements.
+- THE SYSTEM SHALL clearly label each engine option with: offline capability and whether it requires model download.
 
 ---
 
 ## 3. Voice Output (Text-to-Speech)
 
-### User Story 3.1: Local TTS with Piper (via Sherpa-ONNX)
+### User Story 3.1: TTS via Android TextToSpeech API
 
-As a user, I want natural-sounding voice responses that work offline so the assistant feels conversational without requiring internet.
+As a user, I want voice responses to use whatever TTS engine is installed on my phone so I don't need additional downloads.
 
 **Acceptance Criteria:**
 
-- [ ] App integrates Sherpa-ONNX TTS with Piper VITS voice models
-- [ ] At least one English voice model bundled or auto-downloaded on first use
-- [ ] Speech synthesis completes within 1 second for typical response sentences
-- [ ] Audio plays through device speaker or connected Bluetooth audio
-- [ ] Multiple voice models available for download (different languages, quality levels)
+- [ ] App uses Android's standard `TextToSpeech` API
+- [ ] Works with any installed TTS engine (eSpeak-NG, RHVoice, Piper TTS, Google TTS if present)
+- [ ] Speech plays through device speaker or connected Bluetooth audio
+- [ ] Respects Android audio focus (ducks media, releases when done)
+- [ ] No mandatory model downloads — uses what's already on the phone
+- [ ] Falls back to displaying text as Toast/Snackbar if no TTS engine available
+- [ ] Speak on wake word activation only; text-only on mic tap
 
 **Requirements (EARS):**
 
-- WHEN a text response is received from the intent engine, THE SYSTEM SHALL synthesise speech locally using the selected Piper voice model via Sherpa-ONNX.
-- WHEN Piper TTS is active, THE SYSTEM SHALL produce audio output within 1 second for sentences under 50 words on a mid-range device.
-- THE SYSTEM SHALL support downloading additional Piper voice models from HuggingFace, showing model name, language, quality tier (low/medium/high), and file size.
-- THE SYSTEM SHALL play synthesised audio through the active audio output (speaker, Bluetooth, wired headset) respecting Android audio focus.
+- THE SYSTEM SHALL use Android's `TextToSpeech` API for all voice output.
+- WHEN a text response is received from HA, THE SYSTEM SHALL synthesise and play speech using the system's default TTS engine.
+- WHEN no TTS engine is installed, THE SYSTEM SHALL fall back to displaying the response text visually (Toast or on-screen).
+- WHEN the voice interaction was triggered by wake word, THE SYSTEM SHALL speak the response.
+- WHEN the voice interaction was triggered by mic button tap, THE SYSTEM SHALL only display the response text (no audio).
+- THE SYSTEM SHALL respect Android audio focus (request focus before speaking, release after).
 
-### User Story 3.2: Server-side TTS via HA Wyoming/Assist Pipeline
+### User Story 3.2: TTS Configuration
 
-As a user, I want to optionally use my HA server's TTS engine for the highest quality voice responses.
-
-**Acceptance Criteria:**
-
-- [ ] App can request TTS from HA via Assist Pipeline (`end_stage: "tts"`)
-- [ ] Receives TTS audio URL from `tts-end` event and plays it
-- [ ] Falls back to local TTS if HA connection is unavailable
-- [ ] Supports streaming TTS playback (start playing before full audio is downloaded)
-
-**Requirements (EARS):**
-
-- WHEN HA Wyoming TTS is selected AND the intent is processed via HA Conversation API, THE SYSTEM SHALL request TTS by setting `end_stage: "tts"` in the pipeline run.
-- WHEN a `tts-end` event is received with a URL, THE SYSTEM SHALL download and play the audio file from the provided URL.
-- WHEN the HA connection is unavailable AND server-side TTS is selected, THE SYSTEM SHALL fall back to local Piper TTS.
-- THE SYSTEM SHALL begin audio playback as soon as sufficient data is buffered (streaming playback).
-
-### User Story 3.3: eSpeak Fallback TTS
-
-As a user, I want a lightweight fallback TTS that works immediately without downloading models, even on low-storage devices.
+As a user, I want to adjust speech rate and choose a voice.
 
 **Acceptance Criteria:**
 
-- [ ] eSpeak-NG integrated as a zero-download fallback TTS engine
-- [ ] Activates automatically if no Piper models are downloaded yet
-- [ ] Supports 100+ languages out of the box
-- [ ] Minimal storage footprint (< 5MB)
-
-**Requirements (EARS):**
-
-- THE SYSTEM SHALL include eSpeak-NG as a built-in fallback TTS engine requiring no additional downloads.
-- WHEN no Piper voice model is available (first launch or storage cleared), THE SYSTEM SHALL use eSpeak-NG for voice output until a Piper model is downloaded.
-- WHEN the user explicitly selects eSpeak-NG as their TTS engine, THE SYSTEM SHALL use it regardless of Piper model availability.
-
-### User Story 3.4: TTS Engine Selection
-
-As a user, I want to choose my preferred TTS engine and voice so I can customise the assistant's personality.
-
-**Acceptance Criteria:**
-
-- [ ] Settings screen lists all available TTS engines (Piper/Sherpa-ONNX, HA Wyoming, eSpeak-NG)
-- [ ] User can select voice within each engine (e.g., different Piper voices)
-- [ ] User can adjust speech rate and pitch
+- [ ] User can adjust speech rate (0.5x–2.0x)
+- [ ] User can adjust pitch
 - [ ] Audio preview (test sentence) available in settings
+- [ ] Settings respected across app restarts
 
 **Requirements (EARS):**
 
-- THE SYSTEM SHALL provide a TTS settings UI with engine selection, voice selection, speech rate (0.5x–2.0x), and pitch adjustment.
-- WHEN the user taps "Test Voice", THE SYSTEM SHALL synthesise and play a sample sentence using the currently selected engine and voice.
-- THE SYSTEM SHALL remember the last selected TTS engine and voice across app restarts.
+- THE SYSTEM SHALL provide TTS settings for speech rate (0.5x–2.0x) and pitch adjustment.
+- WHEN the user taps "Test Voice", THE SYSTEM SHALL synthesise and play a sample sentence.
+- THE SYSTEM SHALL remember TTS settings across app restarts.
+- NOTE: Voice/engine selection is done via Android system settings (Settings → Accessibility → Text-to-Speech), not within JarvisHA.
 
 ---
 

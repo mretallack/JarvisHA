@@ -16,8 +16,8 @@ JarvisHA is a standalone Android voice assistant designed exclusively for Home A
 ## Features (v1.0)
 
 - 🎙️ "Hey Jarvis" wake word (on-device, background listening with quiet hours)
-- 🗣️ Offline speech recognition (Sherpa-ONNX streaming)
-- 🔊 Offline neural TTS (Piper via Sherpa-ONNX)
+- 🗣️ Speech recognition via Android SpeechRecognizer (works with Whisper, FUTO Voice Input, Vosk — whatever you have installed)
+- 🔊 Text-to-speech via Android TTS (works with eSpeak-NG, RHVoice, Piper — whatever you have installed)
 - 🏠 Voice control of all HA entities via Conversation API (~185ms response)
 - 💬 Chat-style conversation history with multi-turn support
 - ⭐ Entity browser with favourites and alias management
@@ -33,15 +33,15 @@ The official Home Assistant Companion app has Assist support, but with a fundame
 
 | | HA Companion App | JarvisHA |
 |---|---|---|
-| **STT** | Server-side (Whisper on your HA server) | **On-device** (Sherpa-ONNX/Vosk) |
-| **TTS** | Server-side (Piper on your HA server) | **On-device** (Piper via Sherpa-ONNX) |
+| **STT** | Server-side (Whisper on your HA server) | **On-device** via Android SpeechRecognizer (works with Whisper, FUTO Voice Input, Vosk — whatever you have installed) |
+| **TTS** | Server-side (Piper on your HA server) | **On-device** via Android TTS (works with eSpeak-NG, RHVoice, Piper — whatever you have installed) |
 | **Wake word** | On-device (microWakeWord, experimental) | On-device (OpenWakeWord TFLite) |
 | **Requires Google Play** | Yes | No — F-Droid / APK |
-| **Offline voice** | Wake word only — commands need server | Full STT/TTS offline |
+| **Offline voice** | Wake word only — commands need server | Full STT/TTS offline (if installed services support it) |
 | **Intent processing** | HA Conversation API | HA Conversation API (same, ~185ms) |
 | **Entity aliases** | HA web UI only | In-app: browse, add aliases, push to HA |
 
-**The key insight:** JarvisHA does STT and TTS on the phone, sending only lightweight text to HA's Conversation API (~185ms response). The Companion app streams audio to your server for Whisper processing, which is slower and requires a powerful HA server. Once Android 18+ exposes hardware-level wake word APIs (EU DMA, August 2027), the battery concern is solved too.
+**The key insight:** JarvisHA does STT and TTS on the phone using Android's standard APIs, sending only lightweight text to HA's Conversation API (~185ms response). The Companion app streams audio to your server for Whisper processing, which is slower and requires a powerful HA server. JarvisHA works with whatever STT/TTS apps you already have installed — no additional model downloads needed. Once Android 18+ exposes hardware-level wake word APIs (EU DMA, August 2027), the battery concern is solved too.
 
 ## Status
 
@@ -61,8 +61,8 @@ See [`.kiro/specs/jarvis-ha/`](.kiro/specs/jarvis-ha/) for:
 | DI | Hilt |
 | Networking | OkHttp 5 (REST + WebSocket) |
 | Database | Room |
-| STT | Sherpa-ONNX (offline) |
-| TTS | Piper via Sherpa-ONNX / eSpeak-NG |
+| STT | Android SpeechRecognizer API (Sherpa-ONNX fallback) |
+| TTS | Android TextToSpeech API |
 | Wake Word | OpenWakeWord via LiteRT (TFLite) |
 
 ## Requirements
@@ -70,6 +70,8 @@ See [`.kiro/specs/jarvis-ha/`](.kiro/specs/jarvis-ha/) for:
 - Android 8.0+ (API 26)
 - Home Assistant instance with a long-lived access token
 - No Google Play Services required
+- A speech recognition service installed (e.g., [FUTO Voice Input](https://github.com/futo-org/voice-input), [Whisper](https://github.com/woheller69/whisperkeyboard), or Vosk via Dicio)
+- A TTS engine installed (most ROMs include eSpeak-NG; or install RHVoice, Piper TTS)
 
 ## Building
 

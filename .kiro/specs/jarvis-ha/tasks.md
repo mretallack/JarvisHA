@@ -37,23 +37,31 @@
 
 ## Phase 4: Voice Pipeline — STT
 
-- [x] 4.1 Integrate Sherpa-ONNX Android library
-- [x] 4.2 Implement `SherpaOnnxSttEngine` (implements `SttEngine` interface)
+- [x] ~~4.1 Integrate Sherpa-ONNX Android library~~ (REFACTORED: now fallback only)
+- [x] ~~4.2 Implement `SherpaOnnxSttEngine`~~ (REFACTORED: kept as fallback)
 - [x] 4.3 Implement streaming recognition with partial results
 - [x] 4.4 Implement VAD (voice activity detection) for end-of-speech
-- [x] 4.5 Implement model manager — download from upstream with progress, consent UI
+- [x] ~~4.5 Implement model manager~~ (REFACTORED: only needed for Sherpa-ONNX fallback)
 - [x] 4.6 Implement model storage (app internal storage, check existence on launch)
 - [x] 4.7 Write unit tests: engine state machine (init → listening → partial → final)
 - [x] 4.8 Write integration test: mock audio input → verify transcription flow
+- [x] 4.9 **NEW** Implement `AndroidSpeechRecognizerSttEngine` using `android.speech.SpeechRecognizer` API
+- [x] 4.10 **NEW** Enumerate installed recognition services, allow user to select in settings
+- [x] 4.11 **NEW** Handle case where no recognition service is installed (show install prompt)
+- [x] 4.12 **NEW** Write unit tests for SpeechRecognizer engine wrapper
 
 ## Phase 5: Voice Pipeline — TTS
 
-- [x] 5.1 Implement `SherpaOnnxTtsEngine` with Piper voice models
+- [x] ~~5.1 Implement `SherpaOnnxTtsEngine`~~ (OBSOLETE: replaced by Android TextToSpeech)
 - [x] 5.2 Implement audio playback (AudioTrack or MediaPlayer, respect audio focus)
-- [ ] 5.3 Implement model download for TTS (bundled in same download as STT or separate)
-- [ ] 5.4 Implement eSpeak-NG fallback (bundled, no download needed)
+- [x] ~~5.3 Implement model download for TTS~~ (OBSOLETE: no models needed)
+- [x] ~~5.4 Implement eSpeak-NG fallback~~ (OBSOLETE: system handles this)
 - [x] 5.5 Implement TTS behaviour: speak on wake word activation, silent on mic tap
 - [x] 5.6 Write unit tests: TTS state machine, audio focus handling
+- [x] 5.7 **NEW** Implement `AndroidTtsEngine` using `android.speech.tts.TextToSpeech` API
+- [x] 5.8 **NEW** Implement speech rate and pitch configuration
+- [x] 5.9 **NEW** Handle case where no TTS engine is installed (fall back to text display)
+- [x] 5.10 **NEW** Write unit tests for Android TTS wrapper
 
 ## Phase 6: Voice Pipeline — Wake Word
 
