@@ -34,9 +34,9 @@ class ModelManager @Inject constructor(
         // These are individual model files from the sherpa-onnx-streaming-zipformer-en-20M-2023-02-17 model
         private const val STT_MODEL_BASE =
             "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/main"
-        private const val STT_ENCODER_URL = "$STT_MODEL_BASE/encoder-epoch-99-avg-1.onnx"
+        private const val STT_ENCODER_URL = "$STT_MODEL_BASE/encoder-epoch-99-avg-1.int8.onnx"
         private const val STT_DECODER_URL = "$STT_MODEL_BASE/decoder-epoch-99-avg-1.onnx"
-        private const val STT_JOINER_URL = "$STT_MODEL_BASE/joiner-epoch-99-avg-1.onnx"
+        private const val STT_JOINER_URL = "$STT_MODEL_BASE/joiner-epoch-99-avg-1.int8.onnx"
         private const val STT_TOKENS_URL = "$STT_MODEL_BASE/tokens.txt"
 
         // TTS Model (Piper via Sherpa-ONNX)
@@ -141,7 +141,7 @@ class ModelManager @Inject constructor(
             emit(current)
 
             try {
-                android.util.Log.d("ModelManager", "Downloading ${modelFile.filename} from ${modelFile.url}")
+                android.util.Log.d("ModelManager", "Starting download: ${modelFile.filename} from ${modelFile.url}")
                 downloadFile(
                     url = modelFile.url,
                     destination = File(dir, modelFile.filename),
@@ -152,7 +152,7 @@ class ModelManager @Inject constructor(
                     )
                     _sttDownloadState.value = updated
                 }
-                android.util.Log.d("ModelManager", "Downloaded ${modelFile.filename} successfully")
+                android.util.Log.d("ModelManager", "Finished download: ${modelFile.filename} (${File(dir, modelFile.filename).length() / 1024}KB)")
                 completed++
             } catch (e: IOException) {
                 android.util.Log.e("ModelManager", "Failed to download ${modelFile.filename}", e)
@@ -199,6 +199,7 @@ class ModelManager @Inject constructor(
             emit(current)
 
             try {
+                android.util.Log.d("ModelManager", "Starting download: ${modelFile.filename} from ${modelFile.url}")
                 downloadFile(
                     url = modelFile.url,
                     destination = File(dir, modelFile.filename),
@@ -209,8 +210,10 @@ class ModelManager @Inject constructor(
                     )
                     _ttsDownloadState.value = updated
                 }
+                android.util.Log.d("ModelManager", "Finished download: ${modelFile.filename} (${File(dir, modelFile.filename).length() / 1024}KB)")
                 completed++
             } catch (e: IOException) {
+                android.util.Log.e("ModelManager", "Failed to download ${modelFile.filename}", e)
                 val error = progress.copy(
                     error = "Failed to download ${modelFile.filename}: ${e.message}",
                 )
@@ -259,25 +262,102 @@ class ModelManager @Inject constructor(
             .followSslRedirects(true)
             .build()
 
-        val request = Request.Builder().url(url).build()
-        val response = downloadClient.newCall(request).execute()
+        val maxRetries = 3
+        var lastException: IOException? = null
 
-        if (!response.isSuccessful) {
-            throw IOException("HTTP ${response.code}: ${response.message}")
+        for (attempt in 1..maxRetries) {
+            try {
+                val existingBytes = if (destination.exists()) destination.length() else 0L
+
+                val requestBuilder = Request.Builder().url(url)
+                if (existingBytes > 0) {
+                    requestBuilder.header("Range", "bytes=$existingBytes-")
+                    android.util.Log.d("ModelManager", "Resuming download from byte $existingBytes")
+                }
+
+                val response = downloadClient.newCall(requestBuilder.build()).execute()
+
+                if (!response.isSuccessful && response.code != 206) {
+                    // If range not supported and we have partial file, start fresh
+                    if (response.code == 416 || (existingBytes > 0 && response.code == 200)) {
+                        response.close()
+                        destination.delete()
+                        // Retry without range header
+                        val freshResponse = downloadClient.newCall(
+                            Request.Builder().url(url).build()
+                        ).execute()
+                        if (!freshResponse.isSuccessful) {
+                            throw IOException("HTTP ${freshResponse.code}: ${freshResponse.message}")
+                        }
+                        writeResponseToFile(freshResponse, destination, 0L, onProgress)
+                    } else {
+                        throw IOException("HTTP ${response.code}: ${response.message}")
+                    }
+                } else {
+                    val append = response.code == 206
+                    writeResponseToFile(response, destination, if (append) existingBytes else 0L, onProgress)
+                }
+
+                // Success - log final size
+                android.util.Log.d(
+                    "ModelManager",
+                    "Download complete: ${destination.name} (${destination.length() / 1024}KB)"
+                )
+                return
+            } catch (e: IOException) {
+                lastException = e
+                android.util.Log.w(
+                    "ModelManager",
+                    "Download attempt $attempt/$maxRetries failed for ${destination.name}: ${e.message}"
+                )
+                if (attempt < maxRetries) {
+                    val backoffMs = (1L shl attempt) * 1000L // 2s, 4s
+                    Thread.sleep(backoffMs)
+                }
+            }
         }
 
+        throw lastException ?: IOException("Download failed after $maxRetries attempts")
+    }
+
+    private fun writeResponseToFile(
+        response: okhttp3.Response,
+        destination: File,
+        existingBytes: Long,
+        onProgress: (downloaded: Long, total: Long) -> Unit,
+    ) {
         val body = response.body ?: throw IOException("Empty response body")
-        val totalBytes = body.contentLength()
-        var downloaded = 0L
+        val contentLength = body.contentLength()
+        val totalBytes = if (contentLength > 0) contentLength + existingBytes else -1L
+        var downloaded = existingBytes
+        var lastLoggedPercent = -1
 
         body.byteStream().use { input ->
-            destination.outputStream().use { output ->
+            val outputStream = if (existingBytes > 0) {
+                java.io.FileOutputStream(destination, true)
+            } else {
+                destination.outputStream()
+            }
+            outputStream.use { output ->
                 val buffer = ByteArray(8192)
                 var bytesRead: Int
                 while (input.read(buffer).also { bytesRead = it } != -1) {
                     output.write(buffer, 0, bytesRead)
                     downloaded += bytesRead
                     onProgress(downloaded, totalBytes)
+
+                    // Log progress every 10%
+                    if (totalBytes > 0) {
+                        val percent = ((downloaded * 100) / totalBytes).toInt()
+                        val bucket = (percent / 10) * 10
+                        if (bucket > lastLoggedPercent) {
+                            lastLoggedPercent = bucket
+                            android.util.Log.d(
+                                "ModelManager",
+                                "Download ${destination.name}: $bucket% ($downloaded/$totalBytes bytes)"
+                            )
+                        }
+                    }
                 }
             }
         }

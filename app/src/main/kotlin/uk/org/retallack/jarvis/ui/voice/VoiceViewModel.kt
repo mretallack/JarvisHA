@@ -78,6 +78,9 @@ class VoiceViewModel @Inject constructor(
 
     private var wakeWordTriggered = false
 
+    /** True only when the user explicitly triggered listening (mic tap or wake word). */
+    private var userInitiated = false
+
     init {
         configureHaClient()
         initializeEngines()
@@ -117,8 +120,16 @@ class VoiceViewModel @Inject constructor(
         viewModelScope.launch {
             sttEngine.state.collect { state ->
                 when (state) {
-                    SttState.LISTENING -> _mode.value = VoiceUiMode.LISTENING
-                    SttState.PROCESSING -> _mode.value = VoiceUiMode.PROCESSING
+                    SttState.LISTENING -> {
+                        if (userInitiated) {
+                            _mode.value = VoiceUiMode.LISTENING
+                        }
+                    }
+                    SttState.PROCESSING -> {
+                        if (userInitiated) {
+                            _mode.value = VoiceUiMode.PROCESSING
+                        }
+                    }
                     SttState.READY -> {
                         // Only go IDLE if we were listening/processing
                         if (_mode.value == VoiceUiMode.LISTENING ||
@@ -131,6 +142,7 @@ class VoiceViewModel @Inject constructor(
                         if (_mode.value == VoiceUiMode.LISTENING) {
                             _mode.value = VoiceUiMode.ERROR
                         }
+                        userInitiated = false
                     }
                     else -> {}
                 }
@@ -141,6 +153,7 @@ class VoiceViewModel @Inject constructor(
     private suspend fun handleSttResult(result: SttResult) {
         if (result.isFinal) {
             _partialText.value = ""
+            userInitiated = false
             // Don't process STT errors as commands
             if (result.text.isNotBlank() && result.confidence > 0f) {
                 processCommand(result.text)
@@ -159,7 +172,9 @@ class VoiceViewModel @Inject constructor(
     }
 
     fun onMicTap() {
+        android.util.Log.d("JarvisVoice", "onMicTap called, mode=${_mode.value}")
         wakeWordTriggered = false
+        userInitiated = true
         when (_mode.value) {
             VoiceUiMode.IDLE, VoiceUiMode.ERROR -> startListening()
             VoiceUiMode.LISTENING -> stopListening()
@@ -173,6 +188,7 @@ class VoiceViewModel @Inject constructor(
 
     fun onWakeWordDetected() {
         wakeWordTriggered = true
+        userInitiated = true
         startListening()
     }
 

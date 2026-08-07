@@ -86,11 +86,8 @@ fun VoiceScreen(
             MicFab(
                 mode = mode,
                 onClick = {
-                    if (hasRecordPermission()) {
-                        viewModel.onMicTap()
-                    } else {
-                        permissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
-                    }
+                    android.util.Log.d("JarvisUI", "MicFab clicked!")
+                    viewModel.onMicTap()
                 },
             )
         },
