@@ -30,7 +30,7 @@ class ModelManager @Inject constructor(
         /** Directory within app internal storage for models. */
         private const val MODELS_DIR = "models"
 
-        // STT Model (Sherpa-ONNX Whisper tiny.en - offline, accurate)
+        // STT Model (Sherpa-ONNX Whisper tiny.en - offline, good accuracy, fits in memory)
         private const val STT_MODEL_BASE =
             "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny.en/resolve/main"
         private const val STT_ENCODER_URL = "$STT_MODEL_BASE/tiny.en-encoder.int8.onnx"
