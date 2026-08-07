@@ -27,6 +27,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import dagger.hilt.android.AndroidEntryPoint
 import uk.org.retallack.jarvis.ui.entities.EntitiesScreen
 import uk.org.retallack.jarvis.ui.entities.EntityDetailScreen
@@ -55,13 +58,20 @@ fun JarvisApp(
     val isSetupComplete by viewModel.isSetupComplete.collectAsState()
     val themeMode by viewModel.themeMode.collectAsState()
     val navController = rememberNavController()
+    var showWizard by androidx.compose.runtime.remember { mutableStateOf(false) }
 
     JarvisTheme(themeMode = themeMode) {
-        if (isSetupComplete) {
-            MainScreen(navController = navController)
-        } else {
+        if (!isSetupComplete || showWizard) {
             SetupWizardNavHost(
-                onSetupComplete = { viewModel.markSetupComplete() },
+                onSetupComplete = {
+                    viewModel.markSetupComplete()
+                    showWizard = false
+                },
+            )
+        } else {
+            MainScreen(
+                navController = navController,
+                onRerunWizard = { showWizard = true },
             )
         }
     }
@@ -70,6 +80,7 @@ fun JarvisApp(
 @Composable
 fun MainScreen(
     navController: NavHostController,
+    onRerunWizard: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -134,7 +145,7 @@ fun MainScreen(
                 )
             }
             composable(Routes.SETTINGS_TAB) {
-                SettingsScreen()
+                SettingsScreen(onRerunWizard = onRerunWizard)
             }
             composable(Routes.ENTITY_DETAIL) { backStackEntry ->
                 val entityId = backStackEntry.arguments?.getString("entityId") ?: ""

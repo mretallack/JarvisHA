@@ -16,6 +16,7 @@ import uk.org.retallack.jarvis.data.repository.ConversationRepository
 import uk.org.retallack.jarvis.data.repository.ConversationResult
 import uk.org.retallack.jarvis.voice.stt.SttEngine
 import uk.org.retallack.jarvis.voice.stt.SttResult
+import uk.org.retallack.jarvis.voice.stt.SttState
 import uk.org.retallack.jarvis.voice.tts.TtsEngine
 import javax.inject.Inject
 
@@ -111,8 +112,17 @@ class VoiceViewModel @Inject constructor(
     private suspend fun handleSttResult(result: SttResult) {
         if (result.isFinal) {
             _partialText.value = ""
-            if (result.text.isNotBlank()) {
+            // Don't process STT errors as commands
+            if (result.text.isNotBlank() && result.confidence > 0f) {
                 processCommand(result.text)
+            } else if (result.confidence == 0f && result.text.isNotBlank()) {
+                // This is an error message from the STT engine, display it
+                messageDao.insert(
+                    ConversationMessageDb(text = result.text, isUser = false, isError = true),
+                )
+                _mode.value = VoiceUiMode.ERROR
+            } else {
+                _mode.value = VoiceUiMode.IDLE
             }
         } else {
             _partialText.value = result.text
@@ -139,6 +149,12 @@ class VoiceViewModel @Inject constructor(
 
     private fun startListening() {
         viewModelScope.launch {
+            // If engine is in error state, re-initialize first
+            if (sttEngine.state.value == SttState.ERROR ||
+                sttEngine.state.value == SttState.UNINITIALIZED
+            ) {
+                sttEngine.initialize("")
+            }
             _mode.value = VoiceUiMode.LISTENING
             _partialText.value = ""
             sttEngine.startListening()
