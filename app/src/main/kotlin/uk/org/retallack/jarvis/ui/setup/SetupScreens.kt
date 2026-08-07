@@ -191,6 +191,15 @@ fun WakeWordScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
 
+    // Permission launcher for RECORD_AUDIO
+    val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            viewModel.setWakeWordEnabled(true)
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -217,7 +226,14 @@ fun WakeWordScreen(
             Text("Enable Wake Word")
             Switch(
                 checked = state.wakeWordEnabled,
-                onCheckedChange = { viewModel.setWakeWordEnabled(it) },
+                onCheckedChange = { enabled ->
+                    if (enabled) {
+                        // Request microphone permission before enabling
+                        permissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                    } else {
+                        viewModel.setWakeWordEnabled(false)
+                    }
+                },
             )
         }
 

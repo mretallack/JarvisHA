@@ -53,6 +53,23 @@ fun VoiceScreen(
 ) {
     val messages by viewModel.messages.collectAsState()
     val mode by viewModel.mode.collectAsState()
+
+    // Permission launcher for RECORD_AUDIO (needed for mic tap)
+    val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            viewModel.onMicTap()
+        }
+    }
+
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val hasRecordPermission = {
+        androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.RECORD_AUDIO
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
     val partialText by viewModel.partialText.collectAsState()
     val listState = rememberLazyListState()
 
@@ -68,7 +85,13 @@ fun VoiceScreen(
         floatingActionButton = {
             MicFab(
                 mode = mode,
-                onClick = { viewModel.onMicTap() },
+                onClick = {
+                    if (hasRecordPermission()) {
+                        viewModel.onMicTap()
+                    } else {
+                        permissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                    }
+                },
             )
         },
     ) { innerPadding ->
