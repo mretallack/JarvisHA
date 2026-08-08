@@ -8,23 +8,22 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import org.tensorflow.lite.Interpreter
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.time.LocalTime
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.math.abs
 
 /**
- * Wake word detection engine using LiteRT (TFLite) with OpenWakeWord models.
+ * Wake word detection engine using TFLite with OpenWakeWord models.
  *
- * Current implementation: PLACEHOLDER using audio energy detection.
- * Detects sustained loud audio (amplitude > threshold for > 500ms) as a stand-in
- * for real wake word detection. This allows testing the full service lifecycle
- * end-to-end.
+ * Implements the full OpenWakeWord inference pipeline:
+ *   1. melspectrogram.tflite: raw audio (float32) → mel spectrogram features
+ *   2. embedding_model.tflite: 76 mel frames → 96-dim embedding vector
+ *   3. hey_jarvis.tflite: 16 embeddings → detection score [0..1]
  *
- * TODO: Implement proper OpenWakeWord TFLite inference pipeline:
- *   1. melspectrogram.tflite: audio → mel features
- *   2. embedding_model.tflite: mel features → embeddings
- *   3. hey_jarvis.tflite: embeddings → detection score
+ * Based on Dicio's proven Android implementation of the same pipeline.
  */
 @Singleton
 class LiteRtWakeWordEngine @Inject constructor(
@@ -40,8 +39,27 @@ class LiteRtWakeWordEngine @Inject constructor(
     private var sensitivity: Float = 0.5f
     private var quietHoursConfig = QuietHoursConfig()
 
-    // Placeholder detection state
-    private var consecutiveLoudFrames: Int = 0
+    // TFLite interpreters
+    private var melInterpreter: Interpreter? = null
+    private var embInterpreter: Interpreter? = null
+    private var wakeInterpreter: Interpreter? = null
+
+    // Pipeline buffers
+    // Accumulated mel spectrogram frames: 76 frames × 32 bins × 1 channel
+    // Stored as [76][32][1] to match embedding model input [1, 76, 32, 1]
+    private var accumulatedMelFrames: Array<Array<FloatArray>>? = null
+
+    // Accumulated embedding vectors: 16 frames × 96 dims
+    // Stored as [16][96] to match wake model input [1, 16, 96]
+    private var accumulatedEmbeddings: Array<FloatArray>? = null
+
+    // Counter for how many mel frames we've accumulated (until buffer is full)
+    private var melFramesFilled: Int = 0
+
+    // Counter for how many embeddings we've accumulated (until buffer is full)
+    private var embeddingsFilled: Int = 0
+
+    // Cooldown state
     private var cooldownUntil: Long = 0L
 
     companion object {
@@ -49,38 +67,82 @@ class LiteRtWakeWordEngine @Inject constructor(
         private const val SAMPLE_RATE = 16000
         private const val FRAME_SIZE = 1280 // 80ms at 16kHz
 
-        // Placeholder thresholds
-        // Energy threshold scales with sensitivity (higher sensitivity = lower threshold)
-        private const val BASE_ENERGY_THRESHOLD = 3000
-        // Number of consecutive loud frames needed (at 80ms per frame, 7 frames ≈ 560ms)
-        private const val REQUIRED_LOUD_FRAMES = 7
-        // Cooldown period between detections
+        // Mel spectrogram model parameters
+        // Using 1280 samples produces floor((1280-512)/160)+1 = 5 mel frames
+        private const val MEL_INPUT_COUNT = 1280
+        private const val MEL_OUTPUT_COUNT = 5 // mel frames per audio frame
+        private const val MEL_BINS = 32 // mel frequency bins
+
+        // Embedding model parameters
+        private const val EMB_INPUT_FRAMES = 76 // mel frames needed for one embedding
+        private const val EMB_OUTPUT_SIZE = 96 // embedding dimension
+
+        // Wake word model parameters
+        private const val WAKE_INPUT_FRAMES = 16 // embeddings needed for one prediction
+        private const val EMB_OUTPUT_COUNT = 1 // embeddings produced per frame
+
+        // Detection parameters
         private const val COOLDOWN_MS = 4000L
+        private const val BASE_THRESHOLD = 0.5f
     }
 
     override suspend fun initialize(): Boolean {
         return try {
-            // Verify models exist in assets (for future TFLite implementation)
             val modelsExist = ModelPaths.verifyModelsExist(context)
             if (!modelsExist) {
-                Log.w(TAG, "OpenWakeWord models not found in assets, using placeholder detection")
-            } else {
-                Log.i(TAG, "OpenWakeWord models verified in assets")
+                Log.e(TAG, "OpenWakeWord models not found in assets")
+                _state.value = WakeWordState.ERROR
+                return false
             }
 
-            // TODO: Load TFLite models for real inference
-            // val melModel = loadModel(ModelPaths.MELSPECTROGRAM_MODEL)
-            // val embeddingModel = loadModel(ModelPaths.EMBEDDING_MODEL)
-            // val wakeWordModel = loadModel(ModelPaths.WAKE_WORD_MODEL)
+            // Load TFLite interpreters
+            melInterpreter = loadInterpreter(ModelPaths.MELSPECTROGRAM_MODEL)
+            embInterpreter = loadInterpreter(ModelPaths.EMBEDDING_MODEL)
+            wakeInterpreter = loadInterpreter(ModelPaths.WAKE_WORD_MODEL)
+
+            // Resize mel model input (dynamic input size)
+            melInterpreter!!.resizeInput(0, intArrayOf(1, MEL_INPUT_COUNT))
+            melInterpreter!!.allocateTensors()
+
+            // Initialize buffers
+            resetBuffers()
 
             _state.value = WakeWordState.READY
-            Log.i(TAG, "Wake word engine initialized (placeholder mode)")
+            Log.i(TAG, "Wake word engine initialized with OpenWakeWord models")
             true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize wake word engine", e)
             _state.value = WakeWordState.ERROR
             false
         }
+    }
+
+    private fun loadInterpreter(modelPath: String): Interpreter {
+        // Load model bytes from assets into a direct ByteBuffer
+        val modelBytes = context.assets.open(modelPath).use { it.readBytes() }
+        val buffer = ByteBuffer.allocateDirect(modelBytes.size).apply {
+            order(ByteOrder.nativeOrder())
+            put(modelBytes)
+            rewind()
+        }
+
+        val options = Interpreter.Options().apply {
+            setNumThreads(2)
+        }
+        return Interpreter(buffer, options)
+    }
+
+    private fun resetBuffers() {
+        // [76][32][1] - mel frames accumulated for embedding model
+        accumulatedMelFrames = Array(EMB_INPUT_FRAMES) {
+            Array(MEL_BINS) { FloatArray(1) { 0.0f } }
+        }
+        // [16][96] - embeddings accumulated for wake word model
+        accumulatedEmbeddings = Array(WAKE_INPUT_FRAMES) {
+            FloatArray(EMB_OUTPUT_SIZE) { 0.0f }
+        }
+        melFramesFilled = 0
+        embeddingsFilled = 0
     }
 
     override suspend fun startListening() {
@@ -94,13 +156,11 @@ class LiteRtWakeWordEngine @Inject constructor(
             return
         }
         _state.value = WakeWordState.LISTENING
-        consecutiveLoudFrames = 0
-        Log.i(TAG, "Listening for wake word")
+        Log.i(TAG, "Listening for wake word (OpenWakeWord pipeline active)")
     }
 
     override suspend fun stopListening() {
         _state.value = WakeWordState.READY
-        consecutiveLoudFrames = 0
         Log.i(TAG, "Stopped listening")
     }
 
@@ -111,37 +171,117 @@ class LiteRtWakeWordEngine @Inject constructor(
         val now = System.currentTimeMillis()
         if (now < cooldownUntil) return
 
-        // TODO: Replace this placeholder with real TFLite inference pipeline:
-        //   1. Convert samples to float, normalize
-        //   2. Run through melspectrogram model
-        //   3. Run through embedding model
-        //   4. Run through hey_jarvis model
-        //   5. Check output score against threshold
-
-        // PLACEHOLDER: Detect sustained loud audio as stand-in for wake word
-        val energy = calculateRmsEnergy(samples)
-        val threshold = getEnergyThreshold()
-
-        if (energy > threshold) {
-            consecutiveLoudFrames++
-            if (consecutiveLoudFrames >= REQUIRED_LOUD_FRAMES) {
-                // Detection!
-                onDetection(energy.toFloat() / Short.MAX_VALUE)
-            }
-        } else {
-            // Reset counter if audio drops below threshold
-            consecutiveLoudFrames = 0
+        val score = processFrame(samples)
+        if (score > getDetectionThreshold()) {
+            onDetection(score)
         }
     }
 
+    /**
+     * Process one audio frame through the full OpenWakeWord pipeline.
+     * Thread-safe: synchronized to prevent concurrent buffer access.
+     *
+     * @param samples 16-bit PCM audio samples (1280 samples = 80ms at 16kHz)
+     * @return wake word probability [0..1], or 0.0 if buffers not yet filled
+     */
+    @Synchronized
+    private fun processFrame(samples: ShortArray): Float {
+        val melInterp = melInterpreter ?: return 0.0f
+        val embInterp = embInterpreter ?: return 0.0f
+        val wakeInterp = wakeInterpreter ?: return 0.0f
+        val melFrames = accumulatedMelFrames ?: return 0.0f
+        val embeddings = accumulatedEmbeddings ?: return 0.0f
+
+        // Step 1: Convert int16 samples to normalized float32
+        val audioInput = Array(1) { FloatArray(MEL_INPUT_COUNT) }
+        val count = minOf(samples.size, MEL_INPUT_COUNT)
+        for (i in 0 until count) {
+            audioInput[0][i] = samples[i].toFloat() / 32768.0f
+        }
+
+        // Step 2: Run mel spectrogram model
+        // Output shape: [1, 1, T, 32] where T = MEL_OUTPUT_COUNT = 5
+        val melOutput = Array(1) { Array(1) { Array(MEL_OUTPUT_COUNT) { FloatArray(MEL_BINS) } } }
+        melInterp.run(audioInput, melOutput)
+
+        // Step 3: Shift mel buffer left by MEL_OUTPUT_COUNT, append new frames with transform
+        for (i in 0 until EMB_INPUT_FRAMES) {
+            if (i < EMB_INPUT_FRAMES - MEL_OUTPUT_COUNT) {
+                // Shift left
+                melFrames[i] = melFrames[i + MEL_OUTPUT_COUNT]
+            } else {
+                // Append new transformed mel frame
+                val melIdx = i - (EMB_INPUT_FRAMES - MEL_OUTPUT_COUNT)
+                melFrames[i] = Array(MEL_BINS) { bin ->
+                    floatArrayOf((melOutput[0][0][melIdx][bin] / 10.0f) + 2.0f)
+                }
+            }
+        }
+
+        // Track mel fill progress
+        melFramesFilled = minOf(melFramesFilled + MEL_OUTPUT_COUNT, EMB_INPUT_FRAMES)
+
+        // Step 4: If mel buffer not yet full, can't produce embeddings
+        if (melFramesFilled < EMB_INPUT_FRAMES) {
+            return 0.0f
+        }
+
+        // Step 5: Run embedding model
+        // Input shape: [1, 76, 32, 1]
+        val embInput = Array(1) { melFrames }
+        // Output shape: [1, 1, 1, 96]
+        val embOutput = Array(1) { Array(1) { Array(1) { FloatArray(EMB_OUTPUT_SIZE) } } }
+        embInterp.run(embInput, embOutput)
+
+        // Step 6: Shift embedding buffer left by 1, append new embedding
+        for (i in 0 until WAKE_INPUT_FRAMES) {
+            if (i < WAKE_INPUT_FRAMES - EMB_OUTPUT_COUNT) {
+                embeddings[i] = embeddings[i + EMB_OUTPUT_COUNT]
+            } else {
+                embeddings[i] = embOutput[0][0][0].copyOf()
+            }
+        }
+
+        // Track embedding fill progress
+        embeddingsFilled = minOf(embeddingsFilled + EMB_OUTPUT_COUNT, WAKE_INPUT_FRAMES)
+
+        // Step 7: If embedding buffer not yet full, can't produce predictions
+        if (embeddingsFilled < WAKE_INPUT_FRAMES) {
+            return 0.0f
+        }
+
+        // Step 8: Run wake word model
+        // Input shape: [1, 16, 96]
+        val wakeInput = Array(1) { embeddings }
+        // Output shape: [1, 1]
+        val wakeOutput = Array(1) { FloatArray(1) }
+        wakeInterp.run(wakeInput, wakeOutput)
+
+        val score = wakeOutput[0][0]
+        if (score > 0.1f) {
+            Log.d(TAG, "Wake word score: $score")
+        }
+        return score
+    }
+
+    /**
+     * Get detection threshold adjusted by sensitivity.
+     * Higher sensitivity = lower threshold = more sensitive.
+     */
+    private fun getDetectionThreshold(): Float {
+        // Sensitivity 0.0 → threshold = 0.9 (very strict, few false positives)
+        // Sensitivity 0.5 → threshold = 0.5 (balanced)
+        // Sensitivity 1.0 → threshold = 0.1 (very sensitive, more false positives)
+        return 0.9f - (sensitivity * 0.8f)
+    }
+
     private suspend fun onDetection(confidence: Float) {
-        Log.i(TAG, "Wake word detected (placeholder)! confidence=$confidence")
+        Log.i(TAG, "Wake word detected! confidence=$confidence, threshold=${getDetectionThreshold()}")
         _state.value = WakeWordState.DETECTED
         _detections.emit(WakeWordDetection(confidence = confidence))
 
         // Enter cooldown
         cooldownUntil = System.currentTimeMillis() + COOLDOWN_MS
-        consecutiveLoudFrames = 0
 
         // Brief pause then resume listening
         _state.value = WakeWordState.COOLDOWN
@@ -151,33 +291,9 @@ class LiteRtWakeWordEngine @Inject constructor(
         }
     }
 
-    /**
-     * Calculate RMS energy of audio frame.
-     */
-    private fun calculateRmsEnergy(samples: ShortArray): Double {
-        if (samples.isEmpty()) return 0.0
-        var sum = 0.0
-        for (sample in samples) {
-            sum += sample.toDouble() * sample.toDouble()
-        }
-        return Math.sqrt(sum / samples.size)
-    }
-
-    /**
-     * Get energy threshold adjusted by sensitivity.
-     * Higher sensitivity = lower threshold = more sensitive.
-     */
-    private fun getEnergyThreshold(): Double {
-        // Sensitivity 0.0 → threshold = BASE * 2 (less sensitive)
-        // Sensitivity 0.5 → threshold = BASE (default)
-        // Sensitivity 1.0 → threshold = BASE * 0.5 (more sensitive)
-        val factor = 2.0 - (sensitivity * 1.5)
-        return BASE_ENERGY_THRESHOLD * factor
-    }
-
     override fun setSensitivity(sensitivity: Float) {
         this.sensitivity = sensitivity.coerceIn(0.0f, 1.0f)
-        Log.d(TAG, "Sensitivity set to $sensitivity (threshold=${getEnergyThreshold()})")
+        Log.d(TAG, "Sensitivity set to $sensitivity (threshold=${getDetectionThreshold()})")
     }
 
     override fun setQuietHours(config: QuietHoursConfig) {
@@ -203,8 +319,14 @@ class LiteRtWakeWordEngine @Inject constructor(
     }
 
     override suspend fun release() {
-        // TODO: Close TFLite interpreters
-        consecutiveLoudFrames = 0
+        melInterpreter?.close()
+        embInterpreter?.close()
+        wakeInterpreter?.close()
+        melInterpreter = null
+        embInterpreter = null
+        wakeInterpreter = null
+        accumulatedMelFrames = null
+        accumulatedEmbeddings = null
         _state.value = WakeWordState.UNINITIALIZED
         Log.i(TAG, "Wake word engine released")
     }

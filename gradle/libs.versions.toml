@@ -76,7 +76,7 @@ biometric = { module = "androidx.biometric:biometric", version.ref = "biometric"
 # Security
 security-crypto = { module = "androidx.security:security-crypto", version.ref = "security-crypto" }
 
-# TensorFlow Lite (LiteRT) for wake word
+# TensorFlow Lite for wake word
 tensorflow-lite = { module = "org.tensorflow:tensorflow-lite", version.ref = "tensorflow-lite" }
 
 # Testing

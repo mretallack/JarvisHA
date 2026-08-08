@@ -55,6 +55,10 @@ android {
         compose = true
     }
 
+    androidResources {
+        noCompress += "tflite"
+    }
+
     packaging {
         resources {
             excludes += setOf(
