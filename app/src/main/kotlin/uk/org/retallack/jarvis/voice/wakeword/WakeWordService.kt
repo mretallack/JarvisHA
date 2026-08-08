@@ -232,6 +232,8 @@ class WakeWordService : Service() {
                     // Check for detection
                     if (wakeWordEngine.state.value == WakeWordState.DETECTED) {
                         onWakeWordDetected()
+                        // Reset state back to LISTENING so we don't re-trigger
+                        wakeWordEngine.startListening()
                     }
                 } else if (read < 0) {
                     Log.e(TAG, "AudioRecord read error: $read")

@@ -181,8 +181,9 @@ class LiteRtWakeWordEngine @Inject constructor(
     }
 
     fun isDetected(score: Float): Boolean {
-        // Map sensitivity (0.0-1.0) to threshold (0.9-0.1)
-        val threshold = 0.9f - (sensitivity * 0.8f)
+        // Use fixed threshold of 0.8 (same as Dicio)
+        // Sensitivity slider can fine-tune: 0.0 → 0.95, 0.5 → 0.8, 1.0 → 0.5
+        val threshold = 0.95f - (sensitivity * 0.45f)
         return score > threshold
     }
 
@@ -196,6 +197,10 @@ class LiteRtWakeWordEngine @Inject constructor(
 
     override suspend fun processAudio(samples: ShortArray) {
         val score = processFrame(samples)
+        // Only log non-zero scores to avoid spam
+        if (score > 0.1f) {
+            Log.d(TAG, "Wake word score: $score (threshold: ${0.9f - (sensitivity * 0.8f)})")
+        }
         if (isDetected(score)) {
             _state.value = WakeWordState.DETECTED
             _detections.tryEmit(WakeWordDetection(confidence = score))
