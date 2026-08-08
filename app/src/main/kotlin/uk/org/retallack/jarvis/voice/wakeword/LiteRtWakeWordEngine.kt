@@ -188,6 +188,9 @@ class LiteRtWakeWordEngine @Inject constructor(
     }
 
     override suspend fun startListening() {
+        // Reset accumulators to prevent repeated false triggers
+        accumulatedMelOutputs = Array(EMB_INPUT_COUNT) { arrayOf() }
+        accumulatedEmbOutputs = Array(WAKE_INPUT_COUNT) { floatArrayOf() }
         _state.value = WakeWordState.LISTENING
     }
 

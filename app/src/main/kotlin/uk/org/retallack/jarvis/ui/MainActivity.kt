@@ -46,19 +46,21 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
+        // Shared state that the composable can observe
+        val wakeWordTriggered = kotlinx.coroutines.flow.MutableStateFlow(false)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        val startedByWakeWord = intent?.action == WakeWordService.ACTION_WAKE_WORD
-        if (startedByWakeWord) {
+        if (intent?.action == WakeWordService.ACTION_WAKE_WORD) {
             Log.i(TAG, "Started by wake word detection")
+            wakeWordTriggered.value = true
         }
 
         setContent {
-            JarvisApp(startedByWakeWord = startedByWakeWord)
+            JarvisApp()
         }
     }
 
@@ -66,21 +68,20 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         if (intent.action == WakeWordService.ACTION_WAKE_WORD) {
             Log.i(TAG, "Wake word intent received (onNewIntent)")
-            // The composable will re-read intent via activity
-            setIntent(intent)
+            wakeWordTriggered.value = true
         }
     }
 }
 
 @Composable
 fun JarvisApp(
-    startedByWakeWord: Boolean = false,
     viewModel: MainViewModel = hiltViewModel(),
 ) {
     val isSetupComplete by viewModel.isSetupComplete.collectAsState()
     val themeMode by viewModel.themeMode.collectAsState()
     val navController = rememberNavController()
     var showWizard by remember { mutableStateOf(false) }
+    val wakeWordTriggered by MainActivity.wakeWordTriggered.collectAsState()
 
     JarvisTheme(themeMode = themeMode) {
         if (!isSetupComplete || showWizard) {
@@ -94,7 +95,7 @@ fun JarvisApp(
             MainScreen(
                 navController = navController,
                 onRerunWizard = { showWizard = true },
-                autoStartListening = startedByWakeWord,
+                autoStartListening = wakeWordTriggered,
             )
         }
     }
@@ -110,11 +111,13 @@ fun MainScreen(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
-    // When launched by wake word, navigate to Voice tab
+    // When launched by wake word, navigate to Voice tab and start listening
     LaunchedEffect(autoStartListening) {
-        if (autoStartListening && currentRoute != Routes.VOICE_TAB) {
-            navController.navigate(Routes.VOICE_TAB) {
-                popUpTo(Routes.VOICE_TAB) { inclusive = true }
+        if (autoStartListening) {
+            if (currentRoute != Routes.VOICE_TAB) {
+                navController.navigate(Routes.VOICE_TAB) {
+                    popUpTo(Routes.VOICE_TAB) { inclusive = true }
+                }
             }
         }
     }

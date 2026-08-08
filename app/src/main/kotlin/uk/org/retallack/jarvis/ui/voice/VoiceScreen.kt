@@ -48,6 +48,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import uk.org.retallack.jarvis.ui.MainActivity
 
 @Composable
 fun VoiceScreen(
@@ -63,6 +64,8 @@ fun VoiceScreen(
     LaunchedEffect(autoStartListening) {
         if (autoStartListening) {
             viewModel.onWakeWordDetected()
+            // Reset after consuming
+            MainActivity.wakeWordTriggered.value = false
         }
     }
 
