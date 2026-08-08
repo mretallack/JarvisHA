@@ -37,6 +37,11 @@ class EntitiesViewModel @Inject constructor(
     private val _selectedAreaId = MutableStateFlow<String?>(null)
     private val _isSyncing = MutableStateFlow(false)
 
+    init {
+        // Auto-sync entities from HA on first load
+        syncFromHa()
+    }
+
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
     val uiState: StateFlow<EntitiesUiState> = combine(

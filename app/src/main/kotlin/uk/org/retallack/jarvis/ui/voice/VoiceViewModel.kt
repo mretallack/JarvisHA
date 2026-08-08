@@ -195,6 +195,17 @@ class VoiceViewModel @Inject constructor(
         startListening()
     }
 
+    /**
+     * Called when user types a command in the text input field.
+     */
+    fun onTextCommand(text: String) {
+        viewModelScope.launch {
+            if (text.isNotBlank()) {
+                processCommand(text)
+            }
+        }
+    }
+
     private fun startListening() {
         viewModelScope.launch {
             // If engine is in error state, re-initialize first

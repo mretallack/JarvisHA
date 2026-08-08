@@ -88,6 +88,16 @@ class HaWebSocketClient @Inject constructor(
                     is String -> put(key, value)
                     is Int -> put(key, value)
                     is Boolean -> put(key, value)
+                    is List<*> -> put(key, kotlinx.serialization.json.buildJsonArray {
+                        value.forEach { item ->
+                            when (item) {
+                                is String -> add(kotlinx.serialization.json.JsonPrimitive(item))
+                                is Int -> add(kotlinx.serialization.json.JsonPrimitive(item))
+                                is Boolean -> add(kotlinx.serialization.json.JsonPrimitive(item))
+                                else -> if (item != null) add(kotlinx.serialization.json.JsonPrimitive(item.toString()))
+                            }
+                        }
+                    })
                     else -> put(key, value.toString())
                 }
             }
