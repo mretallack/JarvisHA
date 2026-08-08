@@ -85,7 +85,7 @@ class WakeWordService : Service() {
         private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
         private const val FRAME_SIZE = 1152 // 72ms at 16kHz (matches OpenWakeWord mel input)
-        private const val DETECTION_BACKOFF_MS = 4000L
+        private const val DETECTION_BACKOFF_MS = 15000L
 
         @Volatile
         private var running = false
@@ -274,6 +274,19 @@ class WakeWordService : Service() {
 
         Log.i(TAG, "Wake word detected! Processing in background...")
 
+        // Play a short vibration/sound to indicate wake word heard
+        try {
+            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                vibrator.vibrate(android.os.VibrationEffect.createOneShot(100, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(100)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not vibrate", e)
+        }
+
         // Process entirely in background: STT → HA → TTS
         serviceScope.launch {
             try {
@@ -284,6 +297,7 @@ class WakeWordService : Service() {
                         haClient.configure(config.url, config.token)
                     } else {
                         Log.e(TAG, "No HA connection configured")
+                        ttsEngine.speak("Home Assistant not configured")
                         return@launch
                     }
                 }
@@ -292,21 +306,38 @@ class WakeWordService : Service() {
                 val modelDir = modelManager.getSttModelDir().absolutePath
                 sttEngine.initialize(modelDir)
 
-                // Start listening
+                // Start listening - this captures audio until silence detected
                 Log.d(TAG, "Starting STT listening...")
                 sttEngine.startListening()
 
-                // Wait for final result
-                var finalText: String? = null
-                sttEngine.results.collect { result ->
-                    if (result.isFinal && result.confidence > 0f) {
-                        finalText = result.text
-                        return@collect
-                    } else if (result.isFinal && result.confidence == 0f) {
-                        // Error or no speech
-                        Log.d(TAG, "STT returned error/no speech: ${result.text}")
-                        return@collect
+                // Wait for the STT to finish (it stops on silence or manual stop)
+                // Poll the state until it's no longer LISTENING
+                var timeoutMs = 15000L // 15 second max
+                val startTime = System.currentTimeMillis()
+                while (sttEngine.state.value == uk.org.retallack.jarvis.voice.stt.SttState.LISTENING ||
+                    sttEngine.state.value == uk.org.retallack.jarvis.voice.stt.SttState.PROCESSING) {
+                    kotlinx.coroutines.delay(200)
+                    if (System.currentTimeMillis() - startTime > timeoutMs) {
+                        Log.w(TAG, "STT timeout, forcing stop")
+                        sttEngine.stopListening()
+                        break
                     }
+                }
+
+                // Collect the last result
+                var finalText: String? = null
+                // Use first() with a timeout to get the most recent result
+                try {
+                    kotlinx.coroutines.withTimeout(5000) {
+                        sttEngine.results.collect { result ->
+                            if (result.isFinal && result.confidence > 0f && result.text.isNotBlank()) {
+                                finalText = result.text
+                                return@collect
+                            }
+                        }
+                    }
+                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                    Log.d(TAG, "No STT result within timeout")
                 }
 
                 if (finalText.isNullOrBlank()) {
@@ -320,6 +351,14 @@ class WakeWordService : Service() {
                     .removeSuffix(".").removeSuffix(",")
                     .removeSuffix("!").removeSuffix("?")
                     .trim().lowercase()
+                    // Remove "hey jarvis" from the beginning if whisper captured it
+                    .removePrefix("hey jarvis,").removePrefix("hey jarvis")
+                    .trim()
+
+                if (cleanedText.isBlank()) {
+                    ttsEngine.speak("I didn't catch that")
+                    return@launch
+                }
 
                 Log.i(TAG, "Processing command: '$cleanedText'")
 
@@ -351,8 +390,11 @@ class WakeWordService : Service() {
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error processing wake word command", e)
-                ttsEngine.speak("Sorry, something went wrong")
+                try { ttsEngine.speak("Sorry, something went wrong") } catch (_: Exception) {}
             }
+
+            // Increase backoff after processing to prevent re-trigger
+            lastDetectionTime = System.currentTimeMillis()
         }
     }
 
