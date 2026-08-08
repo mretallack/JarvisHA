@@ -92,14 +92,24 @@ fun VoiceScreen(
         }
     }
 
+    // Initial scroll on first composition if messages exist
+    LaunchedEffect(Unit) {
+        if (messages.isNotEmpty()) {
+            listState.scrollToItem(messages.size - 1)
+        }
+    }
+
     Scaffold(
         modifier = modifier,
         floatingActionButton = {
             MicFab(
                 mode = mode,
                 onClick = {
-                    android.util.Log.d("JarvisUI", "MicFab clicked!")
-                    viewModel.onMicTap()
+                    if (hasRecordPermission()) {
+                        viewModel.onMicTap()
+                    } else {
+                        permissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                    }
                 },
             )
         },
@@ -112,6 +122,7 @@ fun VoiceScreen(
             // Chat history
             LazyColumn(
                 state = listState,
+                reverseLayout = false,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),

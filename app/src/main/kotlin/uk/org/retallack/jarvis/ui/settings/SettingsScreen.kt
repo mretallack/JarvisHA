@@ -47,6 +47,17 @@ fun SettingsScreen(
     var showAgentDialog by remember { mutableStateOf(false) }
     var showThemeDialog by remember { mutableStateOf(false) }
 
+    // Permission launcher for RECORD_AUDIO (needed for wake word)
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions(),
+    ) { permissions ->
+        val audioGranted = permissions[android.Manifest.permission.RECORD_AUDIO] == true
+        if (audioGranted) {
+            viewModel.toggleWakeWord(true)
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -129,7 +140,27 @@ fun SettingsScreen(
             trailingContent = {
                 Switch(
                     checked = state.wakeWordEnabled,
-                    onCheckedChange = { enabled -> viewModel.toggleWakeWord(enabled) },
+                    onCheckedChange = { enabled ->
+                        if (enabled) {
+                            // Request permissions before enabling wake word
+                            val permissions = buildList {
+                                add(android.Manifest.permission.RECORD_AUDIO)
+                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                                    add(android.Manifest.permission.POST_NOTIFICATIONS)
+                                }
+                            }
+                            val hasAudio = androidx.core.content.ContextCompat.checkSelfPermission(
+                                context, android.Manifest.permission.RECORD_AUDIO,
+                            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                            if (hasAudio) {
+                                viewModel.toggleWakeWord(true)
+                            } else {
+                                permissionLauncher.launch(permissions.toTypedArray())
+                            }
+                        } else {
+                            viewModel.toggleWakeWord(false)
+                        }
+                    },
                 )
             },
         )

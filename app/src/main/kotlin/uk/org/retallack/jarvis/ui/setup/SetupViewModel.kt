@@ -55,6 +55,25 @@ class SetupViewModel @Inject constructor(
                 sttModelDownloaded = modelManager.isSttModelAvailable(),
             )
         }
+        // Observe real-time download progress from ModelManager's StateFlow
+        viewModelScope.launch {
+            modelManager.sttDownloadState.collect { progress ->
+                if (_uiState.value.isDownloadingSttModel) {
+                    _uiState.value = _uiState.value.copy(
+                        sttDownloadProgress = if (progress.totalBytes > 0) {
+                            progress.bytesDownloaded.toFloat() / progress.totalBytes
+                        } else {
+                            // Fall back to file-level progress
+                            if (progress.totalFiles > 0) {
+                                progress.filesCompleted.toFloat() / progress.totalFiles
+                            } else {
+                                0f
+                            }
+                        },
+                    )
+                }
+            }
+        }
     }
 
     fun updateUrl(url: String) {
