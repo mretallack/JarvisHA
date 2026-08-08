@@ -1,8 +1,10 @@
 package uk.org.retallack.jarvis.ui.settings
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -16,6 +18,8 @@ import uk.org.retallack.jarvis.ui.theme.ThemeMode
 import uk.org.retallack.jarvis.ui.theme.ThemeRepository
 import uk.org.retallack.jarvis.voice.stt.SttEngine
 import uk.org.retallack.jarvis.voice.tts.TtsEngine
+import uk.org.retallack.jarvis.voice.wakeword.WakeWordPreferences
+import uk.org.retallack.jarvis.voice.wakeword.WakeWordService
 import javax.inject.Inject
 
 data class ConversationAgent(
@@ -30,6 +34,7 @@ data class SettingsUiState(
     val sttModelAvailable: Boolean = false,
     val ttsModelAvailable: Boolean = false,
     val wakeWordEnabled: Boolean = false,
+    val wakeWordRunning: Boolean = false,
     val quietHoursEnabled: Boolean = false,
     val quietHoursStart: String = "22:00",
     val quietHoursEnd: String = "07:00",
@@ -43,6 +48,7 @@ data class SettingsUiState(
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
+    @ApplicationContext private val appContext: Context,
     private val connectionRepository: ConnectionRepository,
     private val haClient: HaClient,
     private val sttEngine: SttEngine,
@@ -50,6 +56,7 @@ class SettingsViewModel @Inject constructor(
     private val conversationRepository: ConversationRepository,
     private val modelManager: uk.org.retallack.jarvis.voice.ModelManager,
     private val themeRepository: ThemeRepository,
+    private val wakeWordPreferences: WakeWordPreferences,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -67,12 +74,16 @@ class SettingsViewModel @Inject constructor(
     private fun loadSettings() {
         viewModelScope.launch {
             val config = connectionRepository.getConnectionConfig()
+            val wakeWordEnabled = wakeWordPreferences.getEnabled()
+
             _uiState.value = _uiState.value.copy(
                 isConnected = haClient.isConfigured,
                 haUrl = config?.url ?: "",
                 sttModelAvailable = modelManager.isSttModelAvailable(),
                 ttsModelAvailable = ttsEngine.isModelAvailable(""),
                 selectedAgentId = conversationRepository.getAgent(),
+                wakeWordEnabled = wakeWordEnabled,
+                wakeWordRunning = WakeWordService.isRunning(),
             )
         }
     }
@@ -82,6 +93,26 @@ class SettingsViewModel @Inject constructor(
             themeRepository.themeMode.collect { mode ->
                 _uiState.value = _uiState.value.copy(themeMode = mode)
             }
+        }
+    }
+
+    /**
+     * Toggle wake word detection on/off.
+     */
+    fun toggleWakeWord(enabled: Boolean) {
+        viewModelScope.launch {
+            wakeWordPreferences.setEnabled(enabled)
+
+            if (enabled) {
+                WakeWordService.start(appContext)
+            } else {
+                WakeWordService.stop(appContext)
+            }
+
+            _uiState.value = _uiState.value.copy(
+                wakeWordEnabled = enabled,
+                wakeWordRunning = enabled,
+            )
         }
     }
 

@@ -32,6 +32,7 @@ class EntityRepositoryTest {
     private lateinit var aliasDao: AliasDao
     private lateinit var haClient: HaClient
     private lateinit var webSocketClient: HaWebSocketClient
+    private lateinit var connectionRepository: ConnectionRepository
     private lateinit var repository: EntityRepository
 
     @BeforeEach
@@ -41,7 +42,8 @@ class EntityRepositoryTest {
         aliasDao = mockk(relaxed = true)
         haClient = mockk(relaxed = true)
         webSocketClient = mockk(relaxed = true)
-        repository = EntityRepository(entityDao, areaDao, aliasDao, haClient, webSocketClient)
+        connectionRepository = mockk(relaxed = true)
+        repository = EntityRepository(entityDao, areaDao, aliasDao, haClient, webSocketClient, connectionRepository)
     }
 
     @Test

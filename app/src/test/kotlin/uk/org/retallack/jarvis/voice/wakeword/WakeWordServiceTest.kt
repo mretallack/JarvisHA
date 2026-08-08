@@ -1,7 +1,7 @@
 package uk.org.retallack.jarvis.voice.wakeword
 
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Test
 
 class WakeWordServiceTest {
@@ -17,22 +17,23 @@ class WakeWordServiceTest {
     }
 
     @Test
-    fun `ACTION_WAKE_WORD_DETECTED has expected value`() {
+    fun `ACTION_STOP has expected value`() {
         assertEquals(
-            "uk.org.retallack.jarvis.WAKE_WORD_DETECTED",
-            WakeWordService.ACTION_WAKE_WORD_DETECTED,
+            "uk.org.retallack.jarvis.STOP_WAKE_WORD",
+            WakeWordService.ACTION_STOP,
         )
     }
 
     @Test
-    fun `EXTRA_CONFIDENCE has expected value`() {
-        assertNotNull(WakeWordService.EXTRA_CONFIDENCE)
-        assertEquals("confidence", WakeWordService.EXTRA_CONFIDENCE)
+    fun `ACTION_WAKE_WORD has expected value`() {
+        assertEquals(
+            "uk.org.retallack.jarvis.ACTION_WAKE_WORD",
+            WakeWordService.ACTION_WAKE_WORD,
+        )
     }
 
     @Test
-    fun `EXTRA_TIMESTAMP has expected value`() {
-        assertNotNull(WakeWordService.EXTRA_TIMESTAMP)
-        assertEquals("timestamp", WakeWordService.EXTRA_TIMESTAMP)
+    fun `isRunning returns false when service not started`() {
+        assertFalse(WakeWordService.isRunning())
     }
 }

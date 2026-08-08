@@ -8,7 +8,7 @@ import uk.org.retallack.jarvis.voice.stt.SherpaOnnxSttEngine
 import uk.org.retallack.jarvis.voice.stt.SttEngine
 import uk.org.retallack.jarvis.voice.tts.AndroidTtsEngine
 import uk.org.retallack.jarvis.voice.tts.TtsEngine
-import uk.org.retallack.jarvis.voice.wakeword.MockWakeWordEngine
+import uk.org.retallack.jarvis.voice.wakeword.LiteRtWakeWordEngine
 import uk.org.retallack.jarvis.voice.wakeword.WakeWordEngine
 import javax.inject.Singleton
 
@@ -16,6 +16,7 @@ import javax.inject.Singleton
  * DI module that provides voice pipeline bindings.
  * Uses Sherpa-ONNX for on-device STT (offline, integrated AudioRecord).
  * Uses Android TTS for speech output.
+ * Uses LiteRT (TFLite) for on-device wake word detection.
  * Mock implementations remain available for unit testing via direct instantiation.
  */
 @Module
@@ -32,5 +33,5 @@ abstract class VoiceModule {
 
     @Binds
     @Singleton
-    abstract fun bindWakeWordEngine(impl: MockWakeWordEngine): WakeWordEngine
+    abstract fun bindWakeWordEngine(impl: LiteRtWakeWordEngine): WakeWordEngine
 }

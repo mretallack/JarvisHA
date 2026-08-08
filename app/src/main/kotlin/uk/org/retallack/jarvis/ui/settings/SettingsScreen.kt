@@ -23,6 +23,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -114,12 +115,23 @@ fun SettingsScreen(
         ListItem(
             headlineContent = { Text("Hey Jarvis") },
             supportingContent = {
-                Text(if (state.wakeWordEnabled) "Enabled" else "Disabled")
+                Text(
+                    if (state.wakeWordEnabled) {
+                        if (state.wakeWordRunning) "Listening in background" else "Enabled (starting…)"
+                    } else {
+                        "Disabled"
+                    },
+                )
             },
             leadingContent = {
                 Icon(Icons.Filled.Code, contentDescription = "Wake word settings")
             },
-            modifier = Modifier.clickable { },
+            trailingContent = {
+                Switch(
+                    checked = state.wakeWordEnabled,
+                    onCheckedChange = { enabled -> viewModel.toggleWakeWord(enabled) },
+                )
+            },
         )
         HorizontalDivider()
         ListItem(

@@ -24,6 +24,7 @@ import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -35,6 +36,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
@@ -48,11 +52,19 @@ import androidx.hilt.navigation.compose.hiltViewModel
 @Composable
 fun VoiceScreen(
     modifier: Modifier = Modifier,
+    autoStartListening: Boolean = false,
     onEntityClick: ((String) -> Unit)? = null,
     viewModel: VoiceViewModel = hiltViewModel(),
 ) {
     val messages by viewModel.messages.collectAsState()
     val mode by viewModel.mode.collectAsState()
+
+    // Auto-start listening when launched by wake word
+    LaunchedEffect(autoStartListening) {
+        if (autoStartListening) {
+            viewModel.onWakeWordDetected()
+        }
+    }
 
     // Permission launcher for RECORD_AUDIO (needed for mic tap)
     val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -147,6 +159,48 @@ fun VoiceScreen(
                 VoiceUiMode.SPEAKING -> StatusBar("Speaking...")
                 VoiceUiMode.ERROR -> StatusBar("Error", isError = true)
                 else -> {}
+            }
+
+            // Text command input
+            var textCommand by remember { mutableStateOf("") }
+            androidx.compose.foundation.layout.Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                androidx.compose.material3.OutlinedTextField(
+                    value = textCommand,
+                    onValueChange = { textCommand = it },
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("Type a command...") },
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Send,
+                    ),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                        onSend = {
+                            if (textCommand.isNotBlank()) {
+                                viewModel.onTextCommand(textCommand.trim())
+                                textCommand = ""
+                            }
+                        },
+                    ),
+                )
+                androidx.compose.material3.IconButton(
+                    onClick = {
+                        if (textCommand.isNotBlank()) {
+                            viewModel.onTextCommand(textCommand.trim())
+                            textCommand = ""
+                        }
+                    },
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Send,
+                        contentDescription = "Send command",
+                    )
+                }
             }
         }
     }
@@ -299,8 +353,21 @@ private fun ChatBubble(
                     modifier = Modifier.padding(12.dp),
                 )
             }
+
+            // Timestamp
+            Text(
+                text = formatTimestamp(message.timestamp),
+                style = MaterialTheme.typography.labelSmall,
+                color = textColor.copy(alpha = 0.6f),
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 6.dp),
+            )
         }
     }
+}
+
+private fun formatTimestamp(timestamp: Long): String {
+    val sdf = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+    return sdf.format(java.util.Date(timestamp))
 }
 
 @Composable
