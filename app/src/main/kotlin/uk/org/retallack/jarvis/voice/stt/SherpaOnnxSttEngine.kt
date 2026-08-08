@@ -56,7 +56,7 @@ class SherpaOnnxSttEngine @Inject constructor(
     private val _state = MutableStateFlow(SttState.UNINITIALIZED)
     override val state: StateFlow<SttState> = _state
 
-    private val _results = MutableSharedFlow<SttResult>(extraBufferCapacity = 16)
+    private val _results = MutableSharedFlow<SttResult>(replay = 1, extraBufferCapacity = 16)
     override val results: Flow<SttResult> = _results
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

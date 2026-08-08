@@ -33,6 +33,9 @@
     <!-- Full screen intent for wake word detection (brings app to front) -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
+    <!-- Vibration feedback for wake word detection -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <application
         android:name=".JarvisApplication"
         android:allowBackup="false"
