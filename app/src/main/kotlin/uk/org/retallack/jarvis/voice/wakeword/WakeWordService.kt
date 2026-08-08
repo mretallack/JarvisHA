@@ -256,41 +256,53 @@ class WakeWordService : Service() {
         // Wake the screen if off
         wakeScreen()
 
+        // Create detection notification channel (high importance, with sound)
+        val detectionChannelId = "wake_word_detection_channel"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                detectionChannelId,
+                "Wake Word Detection",
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = "Triggered when Hey Jarvis is detected"
+                enableVibration(true)
+            }
+            val nm = getSystemService(NotificationManager::class.java)
+            nm.createNotificationChannel(channel)
+        }
+
         // Launch MainActivity with wake word action
         try {
             val launchIntent = Intent(this, Class.forName("uk.org.retallack.jarvis.ui.MainActivity")).apply {
                 action = ACTION_WAKE_WORD
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
             }
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                // On Android 10+, we may not be able to start activities from background
-                // Use a full-screen intent as fallback
-                val pendingIntent = PendingIntent.getActivity(
-                    this,
-                    0,
-                    launchIntent,
-                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-                )
+            val pendingIntent = PendingIntent.getActivity(
+                this,
+                0,
+                launchIntent,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
 
-                val detectionNotification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-                    .setContentTitle("Hey Jarvis!")
-                    .setContentText("Wake word detected - tap to open")
-                    .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-                    .setFullScreenIntent(pendingIntent, true)
-                    .setAutoCancel(true)
-                    .setPriority(NotificationCompat.PRIORITY_HIGH)
-                    .setCategory(NotificationCompat.CATEGORY_CALL)
-                    .build()
+            // Show full-screen notification (brings app to front even from background)
+            val detectionNotification = NotificationCompat.Builder(this, detectionChannelId)
+                .setContentTitle("Hey Jarvis!")
+                .setContentText("Listening for your command...")
+                .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+                .setFullScreenIntent(pendingIntent, true)
+                .setContentIntent(pendingIntent)
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_CALL)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .build()
 
-                val nm = getSystemService(NotificationManager::class.java)
-                nm.notify(NOTIFICATION_ID + 1, detectionNotification)
+            val nm = getSystemService(NotificationManager::class.java)
+            nm.notify(NOTIFICATION_ID + 1, detectionNotification)
 
-                // Also try starting activity directly
-                startActivity(launchIntent)
-            } else {
-                startActivity(launchIntent)
-            }
+            // Also try starting activity directly
+            startActivity(launchIntent)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch MainActivity on wake word detection", e)
         }

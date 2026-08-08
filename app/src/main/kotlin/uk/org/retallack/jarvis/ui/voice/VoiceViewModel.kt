@@ -296,6 +296,11 @@ class VoiceViewModel @Inject constructor(
                     messageDao.insert(
                         ConversationMessageDb(text = errorText, isUser = false, isError = true),
                     )
+                    // Speak error if triggered by wake word
+                    if (wakeWordTriggered && errorText.isNotBlank()) {
+                        _mode.value = VoiceUiMode.SPEAKING
+                        ttsEngine.speak(errorText)
+                    }
                     _mode.value = VoiceUiMode.IDLE
                 }
             }

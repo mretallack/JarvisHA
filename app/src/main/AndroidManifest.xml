@@ -30,6 +30,9 @@
     <!-- Biometric authentication -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
+    <!-- Full screen intent for wake word detection (brings app to front) -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
     <application
         android:name=".JarvisApplication"
         android:allowBackup="false"
