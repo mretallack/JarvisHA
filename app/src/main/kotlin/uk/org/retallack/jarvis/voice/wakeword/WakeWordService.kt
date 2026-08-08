@@ -48,6 +48,24 @@ class WakeWordService : Service() {
     @Inject
     lateinit var wakeWordEngine: WakeWordEngine
 
+    @Inject
+    lateinit var sttEngine: uk.org.retallack.jarvis.voice.stt.SttEngine
+
+    @Inject
+    lateinit var ttsEngine: uk.org.retallack.jarvis.voice.tts.TtsEngine
+
+    @Inject
+    lateinit var conversationRepository: uk.org.retallack.jarvis.data.repository.ConversationRepository
+
+    @Inject
+    lateinit var connectionRepository: uk.org.retallack.jarvis.data.repository.ConnectionRepository
+
+    @Inject
+    lateinit var haClient: uk.org.retallack.jarvis.data.ha.HaClient
+
+    @Inject
+    lateinit var modelManager: uk.org.retallack.jarvis.voice.ModelManager
+
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var listeningJob: Job? = null
     private var audioRecord: AudioRecord? = null
@@ -151,6 +169,9 @@ class WakeWordService : Service() {
         if (listeningJob?.isActive == true) return
 
         listeningJob = serviceScope.launch {
+            // Initialize TTS for speaking responses
+            ttsEngine.initialize("")
+
             val initialized = wakeWordEngine.initialize()
             if (!initialized) {
                 Log.e(TAG, "Failed to initialize wake word engine")
@@ -251,60 +272,87 @@ class WakeWordService : Service() {
         }
         lastDetectionTime = now
 
-        Log.i(TAG, "Wake word detected! Launching MainActivity")
+        Log.i(TAG, "Wake word detected! Processing in background...")
 
-        // Wake the screen if off
-        wakeScreen()
+        // Process entirely in background: STT → HA → TTS
+        serviceScope.launch {
+            try {
+                // Configure HA client if needed
+                if (!haClient.isConfigured) {
+                    val config = connectionRepository.getConnectionConfig()
+                    if (config != null) {
+                        haClient.configure(config.url, config.token)
+                    } else {
+                        Log.e(TAG, "No HA connection configured")
+                        return@launch
+                    }
+                }
 
-        // Create detection notification channel (high importance, with sound)
-        val detectionChannelId = "wake_word_detection_channel"
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                detectionChannelId,
-                "Wake Word Detection",
-                NotificationManager.IMPORTANCE_HIGH,
-            ).apply {
-                description = "Triggered when Hey Jarvis is detected"
-                enableVibration(true)
+                // Initialize STT if needed
+                val modelDir = modelManager.getSttModelDir().absolutePath
+                sttEngine.initialize(modelDir)
+
+                // Start listening
+                Log.d(TAG, "Starting STT listening...")
+                sttEngine.startListening()
+
+                // Wait for final result
+                var finalText: String? = null
+                sttEngine.results.collect { result ->
+                    if (result.isFinal && result.confidence > 0f) {
+                        finalText = result.text
+                        return@collect
+                    } else if (result.isFinal && result.confidence == 0f) {
+                        // Error or no speech
+                        Log.d(TAG, "STT returned error/no speech: ${result.text}")
+                        return@collect
+                    }
+                }
+
+                if (finalText.isNullOrBlank()) {
+                    Log.d(TAG, "No speech detected after wake word")
+                    ttsEngine.speak("I didn't catch that")
+                    return@launch
+                }
+
+                // Clean and process command
+                val cleanedText = finalText!!.trim()
+                    .removeSuffix(".").removeSuffix(",")
+                    .removeSuffix("!").removeSuffix("?")
+                    .trim().lowercase()
+
+                Log.i(TAG, "Processing command: '$cleanedText'")
+
+                // Send to HA
+                val result = conversationRepository.processText(cleanedText)
+
+                when (result) {
+                    is uk.org.retallack.jarvis.data.repository.ConversationResult.Success -> {
+                        val responseText = result.speechText ?: "Done"
+                        Log.i(TAG, "HA response: '$responseText'")
+                        ttsEngine.speak(responseText)
+                    }
+                    is uk.org.retallack.jarvis.data.repository.ConversationResult.Error -> {
+                        val errorText = when (result.error) {
+                            is uk.org.retallack.jarvis.data.repository.ConversationError.NotConnected ->
+                                "Not connected to Home Assistant"
+                            is uk.org.retallack.jarvis.data.repository.ConversationError.NoValidTargets ->
+                                "No matching devices found"
+                            is uk.org.retallack.jarvis.data.repository.ConversationError.NoIntentMatch ->
+                                "Command not understood"
+                            is uk.org.retallack.jarvis.data.repository.ConversationError.HaError ->
+                                "Error from Home Assistant"
+                            is uk.org.retallack.jarvis.data.repository.ConversationError.NetworkError ->
+                                "Connection error"
+                        }
+                        Log.w(TAG, "HA error: $errorText")
+                        ttsEngine.speak(errorText)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error processing wake word command", e)
+                ttsEngine.speak("Sorry, something went wrong")
             }
-            val nm = getSystemService(NotificationManager::class.java)
-            nm.createNotificationChannel(channel)
-        }
-
-        // Launch MainActivity with wake word action
-        try {
-            val launchIntent = Intent(this, Class.forName("uk.org.retallack.jarvis.ui.MainActivity")).apply {
-                action = ACTION_WAKE_WORD
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-            }
-
-            val pendingIntent = PendingIntent.getActivity(
-                this,
-                0,
-                launchIntent,
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-            )
-
-            // Show full-screen notification (brings app to front even from background)
-            val detectionNotification = NotificationCompat.Builder(this, detectionChannelId)
-                .setContentTitle("Hey Jarvis!")
-                .setContentText("Listening for your command...")
-                .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-                .setFullScreenIntent(pendingIntent, true)
-                .setContentIntent(pendingIntent)
-                .setAutoCancel(true)
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setCategory(NotificationCompat.CATEGORY_CALL)
-                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                .build()
-
-            val nm = getSystemService(NotificationManager::class.java)
-            nm.notify(NOTIFICATION_ID + 1, detectionNotification)
-
-            // Also try starting activity directly
-            startActivity(launchIntent)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to launch MainActivity on wake word detection", e)
         }
     }
 
