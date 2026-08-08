@@ -274,7 +274,7 @@ class WakeWordService : Service() {
 
         Log.i(TAG, "Wake word detected! Processing in background...")
 
-        // Play a short vibration/sound to indicate wake word heard
+        // Play a short vibration AND tone to indicate wake word heard
         try {
             val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
@@ -285,6 +285,19 @@ class WakeWordService : Service() {
             }
         } catch (e: Exception) {
             Log.w(TAG, "Could not vibrate", e)
+        }
+
+        // Play a short beep to tell user to speak now
+        try {
+            val toneGenerator = android.media.ToneGenerator(
+                android.media.AudioManager.STREAM_NOTIFICATION, 80
+            )
+            toneGenerator.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 150)
+            // Small delay to let user hear the beep before STT starts
+            Thread.sleep(200)
+            toneGenerator.release()
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not play tone", e)
         }
 
         // Process entirely in background: STT → HA → TTS
@@ -355,8 +368,10 @@ class WakeWordService : Service() {
                     .removePrefix("hey jarvis,").removePrefix("hey jarvis")
                     .trim()
 
-                if (cleanedText.isBlank()) {
-                    ttsEngine.speak("I didn't catch that")
+                // Filter out Whisper artifacts (silence markers, sound effects)
+                if (cleanedText.isBlank() || cleanedText.startsWith("[") || cleanedText.startsWith("(")) {
+                    Log.d(TAG, "Filtered out non-speech: '$cleanedText'")
+                    ttsEngine.speak("I didn't catch that. Please try again after the beep.")
                     return@launch
                 }
 
