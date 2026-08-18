@@ -29,6 +29,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import uk.org.retallack.jarvis.data.repository.ConnectionRepository
+import uk.org.retallack.jarvis.data.repository.SttSettings
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -42,15 +44,13 @@ import javax.inject.Singleton
 @Singleton
 class SherpaOnnxSttEngine @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val connectionRepository: ConnectionRepository,
 ) : SttEngine {
 
     companion object {
         private const val TAG = "SherpaSTT"
         private const val SAMPLE_RATE = 16000
         private const val CHUNK_SIZE = 3200 // 200ms at 16kHz
-        private const val MAX_RECORDING_SECONDS = 30
-        private const val SILENCE_THRESHOLD = 500 // amplitude threshold for silence detection
-        private const val SILENCE_DURATION_MS = 2000L // 2 seconds of silence = stop
     }
 
     private val _state = MutableStateFlow(SttState.UNINITIALIZED)
@@ -64,6 +64,9 @@ class SherpaOnnxSttEngine @Inject constructor(
     private var modelDir: String? = null
     private var audioRecord: AudioRecord? = null
     private var recordingJob: Job? = null
+
+    // Configurable settings loaded from DataStore on each startListening()
+    private var currentSettings: SttSettings = SttSettings()
 
     // Buffer to collect all audio samples during recording
     private val audioBuffer = mutableListOf<FloatArray>()
@@ -165,6 +168,10 @@ class SherpaOnnxSttEngine @Inject constructor(
             return
         }
 
+        // Load latest settings from DataStore
+        currentSettings = connectionRepository.getSttSettings()
+        Log.d(TAG, "STT settings: silence=${currentSettings.silenceDurationMs}ms, threshold=${currentSettings.silenceThreshold}, max=${currentSettings.maxRecordingSeconds}s")
+
         _state.value = SttState.LISTENING
         audioBuffer.clear()
 
@@ -208,7 +215,7 @@ class SherpaOnnxSttEngine @Inject constructor(
 
         val shortBuffer = ShortArray(CHUNK_SIZE)
         var totalSamples = 0
-        val maxSamples = SAMPLE_RATE * MAX_RECORDING_SECONDS
+        val maxSamples = SAMPLE_RATE * currentSettings.maxRecordingSeconds
         var silenceStart = 0L
         var hasDetectedSpeech = false
 
@@ -229,7 +236,7 @@ class SherpaOnnxSttEngine @Inject constructor(
 
                 // Check audio level for silence detection
                 val maxAmplitude = shortBuffer.take(shortsRead).maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
-                if (maxAmplitude > SILENCE_THRESHOLD) {
+                if (maxAmplitude > currentSettings.silenceThreshold) {
                     hasDetectedSpeech = true
                     silenceStart = 0L
                     // Emit a "recording" indicator as partial result
@@ -239,7 +246,7 @@ class SherpaOnnxSttEngine @Inject constructor(
                     // Silence after speech
                     if (silenceStart == 0L) {
                         silenceStart = System.currentTimeMillis()
-                    } else if (System.currentTimeMillis() - silenceStart > SILENCE_DURATION_MS) {
+                    } else if (System.currentTimeMillis() - silenceStart > currentSettings.silenceDurationMs) {
                         Log.d(TAG, "Silence detected after speech, stopping recording")
                         break
                     }

@@ -133,11 +133,25 @@ fun EntityDetailScreen(
 
             // Push to HA button
             if (aliases.isNotEmpty()) {
+                val pushStatus by viewModel.pushStatus.collectAsState()
+
                 Button(
                     onClick = { viewModel.pushAliasesToHa() },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text("Push Aliases to Home Assistant")
+                }
+
+                // Show push status feedback
+                pushStatus?.let { status ->
+                    Text(
+                        text = status,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (status.startsWith("✓")) MaterialTheme.colorScheme.primary
+                            else if (status.startsWith("✗")) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
                 }
             }
         } ?: run {

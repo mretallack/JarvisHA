@@ -65,15 +65,25 @@ class EntityRepository @Inject constructor(
         try {
             if (webSocketClient.connectionState.value != uk.org.retallack.jarvis.data.ha.WsConnectionState.CONNECTED) {
                 android.util.Log.w("EntityRepo", "WebSocket not connected, attempting to connect...")
-                // Try to connect if not already
                 val config = connectionRepository.getConnectionConfig()
                 if (config != null) {
                     webSocketClient.configure(config.url, config.token)
                     webSocketClient.connect()
-                    // Wait briefly for connection
-                    kotlinx.coroutines.delay(2000)
+                    // Wait up to 5 seconds for connection
+                    var waited = 0
+                    while (webSocketClient.connectionState.value != uk.org.retallack.jarvis.data.ha.WsConnectionState.CONNECTED && waited < 5000) {
+                        kotlinx.coroutines.delay(200)
+                        waited += 200
+                    }
+                    if (webSocketClient.connectionState.value != uk.org.retallack.jarvis.data.ha.WsConnectionState.CONNECTED) {
+                        throw IllegalStateException("WebSocket failed to connect after 5 seconds (state: ${webSocketClient.connectionState.value})")
+                    }
+                    android.util.Log.d("EntityRepo", "WebSocket connected successfully")
+                } else {
+                    throw IllegalStateException("No HA connection configured")
                 }
             }
+            android.util.Log.d("EntityRepo", "Pushing aliases for $entityId: $aliases")
             webSocketClient.sendCommand(
                 type = "config/entity_registry/update",
                 additionalData = mapOf(
@@ -81,8 +91,9 @@ class EntityRepository @Inject constructor(
                     "aliases" to aliases,
                 ),
             )
+            android.util.Log.d("EntityRepo", "Aliases pushed successfully")
         } catch (e: Exception) {
-            android.util.Log.e("EntityRepo", "Failed to push alias to HA: ${e.message}")
+            android.util.Log.e("EntityRepo", "Failed to push alias to HA: ${e.message}", e)
             throw e
         }
     }

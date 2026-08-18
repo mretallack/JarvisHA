@@ -2,7 +2,10 @@ package uk.org.retallack.jarvis.ui.settings
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -23,6 +26,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -32,9 +36,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import uk.org.retallack.jarvis.data.repository.SttSettings
 import uk.org.retallack.jarvis.ui.theme.ThemeMode
 
 @Composable
@@ -101,6 +107,13 @@ fun SettingsScreen(
                 Icon(Icons.Filled.RecordVoiceOver, contentDescription = "Text to speech settings")
             },
             modifier = Modifier.clickable { },
+        )
+        HorizontalDivider()
+
+        // STT End-of-Command Detection Settings
+        SttSettingsSliders(
+            sttSettings = state.sttSettings,
+            onSettingsChanged = { viewModel.updateSttSettings(it) },
         )
         HorizontalDivider()
 
@@ -368,4 +381,105 @@ private fun SettingsSection(
         color = MaterialTheme.colorScheme.primary,
         modifier = modifier.padding(horizontal = 16.dp, vertical = 12.dp),
     )
+}
+
+@Composable
+private fun SttSettingsSliders(
+    sttSettings: SttSettings,
+    onSettingsChanged: (SttSettings) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Text(
+            text = "End-of-Command Detection",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+
+        // Silence Duration slider
+        val silenceDurationSeconds = sttSettings.silenceDurationMs / 1000f
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                text = "Silence Duration: ${"%.1f".format(silenceDurationSeconds)}s",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Slider(
+            value = silenceDurationSeconds,
+            onValueChange = { value ->
+                val ms = (value * 1000).toInt()
+                onSettingsChanged(sttSettings.copy(silenceDurationMs = ms))
+            },
+            valueRange = 1f..5f,
+            steps = 7, // 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0 → 8 intervals = 7 steps
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Text("1s", style = MaterialTheme.typography.labelSmall)
+            Spacer(modifier = Modifier.weight(1f))
+            Text("5s", style = MaterialTheme.typography.labelSmall)
+        }
+
+        // Silence Threshold slider
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp),
+        ) {
+            Text(
+                text = "Silence Threshold: ${sttSettings.silenceThreshold}",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Slider(
+            value = sttSettings.silenceThreshold.toFloat(),
+            onValueChange = { value ->
+                onSettingsChanged(sttSettings.copy(silenceThreshold = value.toInt()))
+            },
+            valueRange = 200f..1500f,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Text("200", style = MaterialTheme.typography.labelSmall)
+            Spacer(modifier = Modifier.weight(1f))
+            Text("1500", style = MaterialTheme.typography.labelSmall)
+        }
+
+        // Max Recording slider
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp),
+        ) {
+            Text(
+                text = "Max Recording: ${sttSettings.maxRecordingSeconds}s",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Slider(
+            value = sttSettings.maxRecordingSeconds.toFloat(),
+            onValueChange = { value ->
+                onSettingsChanged(sttSettings.copy(maxRecordingSeconds = value.toInt()))
+            },
+            valueRange = 10f..60f,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Text("10s", style = MaterialTheme.typography.labelSmall)
+            Spacer(modifier = Modifier.weight(1f))
+            Text("60s", style = MaterialTheme.typography.labelSmall)
+        }
+    }
 }

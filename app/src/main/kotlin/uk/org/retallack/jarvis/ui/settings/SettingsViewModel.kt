@@ -14,6 +14,7 @@ import kotlinx.coroutines.launch
 import uk.org.retallack.jarvis.data.ha.HaClient
 import uk.org.retallack.jarvis.data.repository.ConnectionRepository
 import uk.org.retallack.jarvis.data.repository.ConversationRepository
+import uk.org.retallack.jarvis.data.repository.SttSettings
 import uk.org.retallack.jarvis.ui.theme.ThemeMode
 import uk.org.retallack.jarvis.ui.theme.ThemeRepository
 import uk.org.retallack.jarvis.voice.stt.SttEngine
@@ -44,6 +45,7 @@ data class SettingsUiState(
     val selectedAgentId: String? = null,
     val isLoadingAgents: Boolean = false,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val sttSettings: SttSettings = SttSettings(),
 )
 
 @HiltViewModel
@@ -75,6 +77,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             val config = connectionRepository.getConnectionConfig()
             val wakeWordEnabled = wakeWordPreferences.getEnabled()
+            val sttSettings = connectionRepository.getSttSettings()
 
             _uiState.value = _uiState.value.copy(
                 isConnected = haClient.isConfigured,
@@ -84,6 +87,7 @@ class SettingsViewModel @Inject constructor(
                 selectedAgentId = conversationRepository.getAgent(),
                 wakeWordEnabled = wakeWordEnabled,
                 wakeWordRunning = WakeWordService.isRunning(),
+                sttSettings = sttSettings,
             )
         }
     }
@@ -160,6 +164,13 @@ class SettingsViewModel @Inject constructor(
     fun setThemeMode(mode: ThemeMode) {
         viewModelScope.launch {
             themeRepository.setThemeMode(mode)
+        }
+    }
+
+    fun updateSttSettings(settings: SttSettings) {
+        _uiState.value = _uiState.value.copy(sttSettings = settings)
+        viewModelScope.launch {
+            connectionRepository.saveSttSettings(settings)
         }
     }
 }

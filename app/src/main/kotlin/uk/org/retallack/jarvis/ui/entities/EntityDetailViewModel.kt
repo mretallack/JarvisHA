@@ -26,6 +26,9 @@ class EntityDetailViewModel @Inject constructor(
     private val _entity = MutableStateFlow<HaEntityDb?>(null)
     val entity: StateFlow<HaEntityDb?> = _entity.asStateFlow()
 
+    private val _pushStatus = MutableStateFlow<String?>(null)
+    val pushStatus: StateFlow<String?> = _pushStatus.asStateFlow()
+
     val aliases: StateFlow<List<AliasDb>> = entityRepository.getAliasesForEntity(entityId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -53,8 +56,20 @@ class EntityDetailViewModel @Inject constructor(
 
     fun pushAliasesToHa() {
         viewModelScope.launch {
-            val currentAliases = aliases.value.map { it.alias }
-            entityRepository.pushAliasToHa(entityId, currentAliases)
+            _pushStatus.value = "Pushing aliases..."
+            try {
+                val currentAliases = aliases.value.map { it.alias }
+                entityRepository.pushAliasToHa(entityId, currentAliases)
+                _pushStatus.value = "✓ Aliases pushed to Home Assistant"
+                // Clear status after 3 seconds
+                kotlinx.coroutines.delay(3000)
+                _pushStatus.value = null
+            } catch (e: Exception) {
+                android.util.Log.e("EntityDetail", "Push failed", e)
+                _pushStatus.value = "✗ Failed: ${e.message}"
+                kotlinx.coroutines.delay(5000)
+                _pushStatus.value = null
+            }
         }
     }
 }

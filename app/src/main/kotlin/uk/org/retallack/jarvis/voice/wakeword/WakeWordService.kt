@@ -66,6 +66,9 @@ class WakeWordService : Service() {
     @Inject
     lateinit var modelManager: uk.org.retallack.jarvis.voice.ModelManager
 
+    @Inject
+    lateinit var messageDao: uk.org.retallack.jarvis.data.db.dao.ConversationMessageDao
+
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var listeningJob: Job? = null
     private var audioRecord: AudioRecord? = null
@@ -278,24 +281,29 @@ class WakeWordService : Service() {
         try {
             val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                vibrator.vibrate(android.os.VibrationEffect.createOneShot(100, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                vibrator.vibrate(android.os.VibrationEffect.createOneShot(200, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
             } else {
                 @Suppress("DEPRECATION")
-                vibrator.vibrate(100)
+                vibrator.vibrate(200)
             }
+            Log.d(TAG, "Vibration triggered")
         } catch (e: Exception) {
             Log.w(TAG, "Could not vibrate", e)
         }
 
+        // Wait for vibration to be felt before playing beep
+        Thread.sleep(250)
+
         // Play a short beep to tell user to speak now
         try {
             val toneGenerator = android.media.ToneGenerator(
-                android.media.AudioManager.STREAM_NOTIFICATION, 80
+                android.media.AudioManager.STREAM_MUSIC, 100
             )
-            toneGenerator.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 150)
-            // Small delay to let user hear the beep before STT starts
-            Thread.sleep(200)
+            toneGenerator.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 300)
+            // Delay to let user hear the beep before STT starts
+            Thread.sleep(300)
             toneGenerator.release()
+            Log.d(TAG, "Beep played")
         } catch (e: Exception) {
             Log.w(TAG, "Could not play tone", e)
         }
@@ -377,13 +385,22 @@ class WakeWordService : Service() {
 
                 Log.i(TAG, "Processing command: '$cleanedText'")
 
+                // Save user message to chat
+                messageDao.insert(uk.org.retallack.jarvis.data.db.entity.ConversationMessageDb(
+                    text = cleanedText, isUser = true
+                ))
+
                 // Send to HA
                 val result = conversationRepository.processText(cleanedText)
 
                 when (result) {
                     is uk.org.retallack.jarvis.data.repository.ConversationResult.Success -> {
-                        val responseText = result.speechText ?: "Done"
+                        val responseText = uk.org.retallack.jarvis.data.ha.model.VerboseResponseBuilder.build(result.response)
                         Log.i(TAG, "HA response: '$responseText'")
+                        // Save response to chat
+                        messageDao.insert(uk.org.retallack.jarvis.data.db.entity.ConversationMessageDb(
+                            text = responseText, isUser = false
+                        ))
                         ttsEngine.speak(responseText)
                     }
                     is uk.org.retallack.jarvis.data.repository.ConversationResult.Error -> {
@@ -400,6 +417,10 @@ class WakeWordService : Service() {
                                 "Connection error"
                         }
                         Log.w(TAG, "HA error: $errorText")
+                        // Save error to chat
+                        messageDao.insert(uk.org.retallack.jarvis.data.db.entity.ConversationMessageDb(
+                            text = errorText, isUser = false, isError = true
+                        ))
                         ttsEngine.speak(errorText)
                     }
                 }

@@ -114,7 +114,10 @@ class VoiceViewModel @Inject constructor(
     private fun observeSttResults() {
         viewModelScope.launch {
             sttEngine.results.collect { result ->
-                handleSttResult(result)
+                // Only process if user initiated (mic tap), not during wake word service handling
+                if (userInitiated) {
+                    handleSttResult(result)
+                }
             }
         }
     }
@@ -250,7 +253,7 @@ class VoiceViewModel @Inject constructor(
 
             when (result) {
                 is ConversationResult.Success -> {
-                    val responseText = result.speechText ?: "Done"
+                    val responseText = uk.org.retallack.jarvis.data.ha.model.VerboseResponseBuilder.build(result.response)
 
                     // Extract entity info from response data
                     val successTargets = result.response.response.data?.success ?: emptyList()
