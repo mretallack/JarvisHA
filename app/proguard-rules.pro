@@ -13,3 +13,6 @@
 
 # Keep TFLite model classes
 -keep class org.tensorflow.lite.** { *; }
+
+# Suppress missing Error Prone annotations used by Google Tink / security-crypto
+-dontwarn com.google.errorprone.annotations.**
