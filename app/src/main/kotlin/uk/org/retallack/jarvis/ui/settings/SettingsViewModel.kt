@@ -78,6 +78,7 @@ class SettingsViewModel @Inject constructor(
             val config = connectionRepository.getConnectionConfig()
             val wakeWordEnabled = wakeWordPreferences.getEnabled()
             val sttSettings = connectionRepository.getSttSettings()
+            val quietHoursSettings = connectionRepository.getQuietHoursSettings()
 
             _uiState.value = _uiState.value.copy(
                 isConnected = haClient.isConfigured,
@@ -87,6 +88,9 @@ class SettingsViewModel @Inject constructor(
                 selectedAgentId = conversationRepository.getAgent(),
                 wakeWordEnabled = wakeWordEnabled,
                 wakeWordRunning = WakeWordService.isRunning(),
+                quietHoursEnabled = quietHoursSettings.enabled,
+                quietHoursStart = quietHoursSettings.startTime,
+                quietHoursEnd = quietHoursSettings.endTime,
                 sttSettings = sttSettings,
             )
         }
@@ -164,6 +168,24 @@ class SettingsViewModel @Inject constructor(
     fun setThemeMode(mode: ThemeMode) {
         viewModelScope.launch {
             themeRepository.setThemeMode(mode)
+        }
+    }
+
+    
+    fun updateQuietHours(enabled: Boolean, start: String, end: String) {
+        _uiState.value = _uiState.value.copy(
+            quietHoursEnabled = enabled,
+            quietHoursStart = start,
+            quietHoursEnd = end,
+        )
+        viewModelScope.launch {
+            connectionRepository.saveQuietHoursSettings(
+                uk.org.retallack.jarvis.data.repository.QuietHoursSettings(
+                    enabled = enabled,
+                    startTime = start,
+                    endTime = end,
+                )
+            )
         }
     }
 
