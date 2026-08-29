@@ -43,6 +43,9 @@ class EntityRepositoryTest {
         haClient = mockk(relaxed = true)
         webSocketClient = mockk(relaxed = true)
         connectionRepository = mockk(relaxed = true)
+        
+        every { webSocketClient.connectionState } returns kotlinx.coroutines.flow.MutableStateFlow(uk.org.retallack.jarvis.data.ha.WsConnectionState.CONNECTED)
+
         repository = EntityRepository(entityDao, areaDao, aliasDao, haClient, webSocketClient, connectionRepository)
     }
 
