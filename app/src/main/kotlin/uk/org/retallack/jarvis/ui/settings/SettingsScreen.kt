@@ -267,19 +267,7 @@ fun SettingsScreen(
         }
         HorizontalDivider()
 
-        // Security
-        SettingsSection("Security")
-        ListItem(
-            headlineContent = { Text("Biometric Auth") },
-            supportingContent = {
-                Text(if (state.biometricEnabled) "Required for sensitive devices" else "Disabled")
-            },
-            leadingContent = {
-                Icon(Icons.Filled.Security, contentDescription = "Biometric security settings")
-            },
-            modifier = Modifier.clickable { },
-        )
-        HorizontalDivider()
+
 
         // Appearance
         SettingsSection("Appearance")
