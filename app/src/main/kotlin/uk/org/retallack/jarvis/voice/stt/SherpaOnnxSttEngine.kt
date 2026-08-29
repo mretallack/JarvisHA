@@ -241,7 +241,7 @@ class SherpaOnnxSttEngine @Inject constructor(
                     silenceStart = 0L
                     // Emit a "recording" indicator as partial result
                     val seconds = totalSamples / SAMPLE_RATE
-                    _results.tryEmit(SttResult(text = "Recording... ${seconds}s", isFinal = false))
+                    // _results.tryEmit(SttResult(text = "Recording... ${seconds}s", isFinal = false))
                 } else if (hasDetectedSpeech) {
                     // Silence after speech
                     if (silenceStart == 0L) {
@@ -278,7 +278,7 @@ class SherpaOnnxSttEngine @Inject constructor(
 
     private suspend fun processBufferedAudio() {
         _state.value = SttState.PROCESSING
-        _results.tryEmit(SttResult(text = "Processing...", isFinal = false))
+        // _results.tryEmit(SttResult(text = "Processing...", isFinal = false))
 
         withContext(Dispatchers.IO) {
             try {

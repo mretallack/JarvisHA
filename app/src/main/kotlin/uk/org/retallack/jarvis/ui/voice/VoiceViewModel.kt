@@ -161,7 +161,7 @@ class VoiceViewModel @Inject constructor(
             _partialText.value = ""
             userInitiated = false
             // Don't process STT errors as commands
-            if (result.text.isNotBlank() && result.confidence > 0f) {
+            if (result.text.isNotBlank() && result.confidence > 0f && !result.text.startsWith("Recording...") && !result.text.startsWith("Processing...")) {
                 processCommand(result.text)
             } else if (result.confidence == 0f && result.text.isNotBlank()) {
                 // This is an error message from the STT engine, display it
@@ -233,7 +233,7 @@ class VoiceViewModel @Inject constructor(
             _mode.value = VoiceUiMode.IDLE
 
             // If we have partial text, process it as a command
-            if (currentPartial.isNotBlank()) {
+            if (currentPartial.isNotBlank() && !currentPartial.startsWith("Recording...") && !currentPartial.startsWith("Processing...")) {
                 processCommand(currentPartial)
             }
         }
