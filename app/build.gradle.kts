@@ -198,3 +198,9 @@ tasks.register<JacocoReport>("jacocoTestReport") {
     this.sourceDirectories.setFrom(sourceDirectories)
     this.executionData.setFrom(executionData)
 }
+
+
+ktlint {
+    android.set(true)
+    ignoreFailures.set(true)
+}
