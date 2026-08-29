@@ -4,6 +4,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
@@ -23,6 +24,7 @@ import uk.org.retallack.jarvis.data.db.entity.AreaDb
 import uk.org.retallack.jarvis.data.db.entity.HaEntityDb
 import uk.org.retallack.jarvis.data.ha.HaClient
 import uk.org.retallack.jarvis.data.ha.HaWebSocketClient
+import uk.org.retallack.jarvis.data.ha.WsConnectionState
 import uk.org.retallack.jarvis.data.ha.model.HaEntityState
 
 class EntityRepositoryTest {
@@ -44,7 +46,7 @@ class EntityRepositoryTest {
         webSocketClient = mockk(relaxed = true)
         connectionRepository = mockk(relaxed = true)
         
-        every { webSocketClient.connectionState } returns kotlinx.coroutines.flow.MutableStateFlow(uk.org.retallack.jarvis.data.ha.WsConnectionState.CONNECTED)
+        every { webSocketClient.connectionState } returns MutableStateFlow(WsConnectionState.CONNECTED)
 
         repository = EntityRepository(entityDao, areaDao, aliasDao, haClient, webSocketClient, connectionRepository)
     }
