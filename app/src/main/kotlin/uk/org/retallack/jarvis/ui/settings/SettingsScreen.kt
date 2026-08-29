@@ -55,6 +55,18 @@ fun SettingsScreen(
 
     // Permission launcher for RECORD_AUDIO (needed for wake word)
     val context = androidx.compose.ui.platform.LocalContext.current
+
+    var showQuietHoursDialog by remember { mutableStateOf(false) }
+    var qhEnabled by remember { mutableStateOf(state.quietHoursEnabled) }
+    var qhStart by remember { mutableStateOf(state.quietHoursStart) }
+    var qhEnd by remember { mutableStateOf(state.quietHoursEnd) }
+
+    androidx.compose.runtime.LaunchedEffect(state.quietHoursEnabled, state.quietHoursStart, state.quietHoursEnd) {
+        qhEnabled = state.quietHoursEnabled
+        qhStart = state.quietHoursStart
+        qhEnd = state.quietHoursEnd
+    }
+
     val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions(),
     ) { permissions ->
@@ -192,8 +204,67 @@ fun SettingsScreen(
             leadingContent = {
                 Icon(Icons.Filled.Nightlight, contentDescription = "Quiet hours settings")
             },
-            modifier = Modifier.clickable { },
+            modifier = Modifier.clickable { showQuietHoursDialog = true },
         )
+
+        if (showQuietHoursDialog) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { showQuietHoursDialog = false },
+                title = { Text("Configure Quiet Hours") },
+                text = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(16.dp),
+                    ) {
+                        androidx.compose.foundation.layout.Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                        ) {
+                            Text("Enable Quiet Hours")
+                            Switch(
+                                checked = qhEnabled,
+                                onCheckedChange = { qhEnabled = it },
+                            )
+                        }
+
+                        if (qhEnabled) {
+                            androidx.compose.material3.OutlinedTextField(
+                                value = qhStart,
+                                onValueChange = { qhStart = it },
+                                label = { Text("Start Time (HH:MM)") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            androidx.compose.material3.OutlinedTextField(
+                                value = qhEnd,
+                                onValueChange = { qhEnd = it },
+                                label = { Text("End Time (HH:MM)") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(
+                        onClick = {
+                            viewModel.updateQuietHours(qhEnabled, qhStart, qhEnd)
+                            showQuietHoursDialog = false
+                        }
+                    ) {
+                        Text("Save")
+                    }
+                },
+                dismissButton = {
+                    androidx.compose.material3.TextButton(
+                        onClick = { showQuietHoursDialog = false }
+                    ) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
         HorizontalDivider()
 
         // Security
