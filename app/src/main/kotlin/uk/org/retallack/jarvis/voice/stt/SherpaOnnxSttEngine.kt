@@ -99,10 +99,18 @@ class SherpaOnnxSttEngine @Inject constructor(
                     return@withContext false
                 }
 
-                // Don't load model yet — load on demand when startListening is called
-                // This saves ~90MB RAM when idle
+                // Pre-load Whisper model into memory to eliminate latency on first utterance
+                Log.i(TAG, "Pre-loading Whisper model into memory...")
+                recognizer = loadModel()
+                if (recognizer == null) {
+                    _state.value = SttState.ERROR
+                    _results.tryEmit(
+                        SttResult(text = "Failed to load speech model", isFinal = true, confidence = 0f)
+                    )
+                    return@withContext false
+                }
                 _state.value = SttState.READY
-                Log.i(TAG, "Sherpa-ONNX Whisper ready (model at $modelDir, will load on demand)")
+                Log.i(TAG, "Sherpa-ONNX Whisper ready and pre-loaded (model at $modelDir)")
                 true
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to initialize Sherpa-ONNX Whisper", e)
@@ -320,14 +328,12 @@ class SherpaOnnxSttEngine @Inject constructor(
                     _results.tryEmit(SttResult(text = "No speech detected", isFinal = true, confidence = 0f))
                 }
 
-                // Release model from memory to prevent OOM when app is backgrounded
-                recognizer = null
-                Log.d(TAG, "Whisper model released from memory")
+                // Keep model resident in memory for instant subsequent responses
+                Log.d(TAG, "Whisper model kept resident in memory")
 
                 _state.value = SttState.READY
             } catch (e: Exception) {
                 Log.e(TAG, "Whisper processing failed", e)
-                recognizer = null
                 _state.value = SttState.ERROR
                 _results.tryEmit(
                     SttResult(text = "Recognition failed: ${e.message}", isFinal = true, confidence = 0f),
