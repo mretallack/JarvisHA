@@ -345,20 +345,21 @@ class WakeWordService : Service() {
                     }
                 }
 
-                // Collect the last result
+                // Collect the final result immediately
                 var finalText: String? = null
-                // Use first() with a timeout to get the most recent result
                 try {
                     kotlinx.coroutines.withTimeout(5000) {
                         sttEngine.results.collect { result ->
                             if (result.isFinal && result.confidence > 0f && result.text.isNotBlank()) {
                                 finalText = result.text
-                                return@collect
+                                throw kotlinx.coroutines.CancellationException("Found")
                             }
                         }
                     }
                 } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                     Log.d(TAG, "No STT result within timeout")
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    if (e.message != "Found") throw e
                 }
 
                 if (finalText.isNullOrBlank()) {
