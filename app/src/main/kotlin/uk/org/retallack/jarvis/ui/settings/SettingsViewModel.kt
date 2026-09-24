@@ -46,6 +46,7 @@ data class SettingsUiState(
     val isLoadingAgents: Boolean = false,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val sttSettings: SttSettings = SttSettings(),
+    val isIgnoringBatteryOptimizations: Boolean = true,
 )
 
 @HiltViewModel
@@ -80,6 +81,9 @@ class SettingsViewModel @Inject constructor(
             val sttSettings = connectionRepository.getSttSettings()
             val quietHoursSettings = connectionRepository.getQuietHoursSettings()
 
+            val powerManager = appContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            val isIgnoring = powerManager.isIgnoringBatteryOptimizations(appContext.packageName)
+
             _uiState.value = _uiState.value.copy(
                 isConnected = haClient.isConfigured,
                 haUrl = config?.url ?: "",
@@ -92,6 +96,7 @@ class SettingsViewModel @Inject constructor(
                 quietHoursStart = quietHoursSettings.startTime,
                 quietHoursEnd = quietHoursSettings.endTime,
                 sttSettings = sttSettings,
+                isIgnoringBatteryOptimizations = isIgnoring,
             )
         }
     }

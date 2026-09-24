@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Nightlight
 import androidx.compose.material.icons.filled.RecordVoiceOver
@@ -21,6 +22,7 @@ import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
@@ -148,6 +150,44 @@ fun SettingsScreen(
 
         // Wake word
         SettingsSection("Wake Word")
+        ListItem(
+            headlineContent = { Text("Battery Optimization") },
+            supportingContent = {
+                Text(
+                    if (state.isIgnoringBatteryOptimizations) {
+                        "Unrestricted (Reliable background listening)"
+                    } else {
+                        "Optimized (May be stopped in background)"
+                    },
+                )
+            },
+            leadingContent = {
+                Icon(Icons.Filled.Lock, contentDescription = "Battery optimization")
+            },
+            trailingContent = {
+                if (!state.isIgnoringBatteryOptimizations) {
+                    Button(onClick = {
+                        try {
+                            val intent = android.content.Intent(
+                                android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                android.net.Uri.parse("package:${context.packageName}"),
+                            )
+                            context.startActivity(intent)
+                        } catch (_: Exception) {
+                            try {
+                                val intent = android.content.Intent(
+                                    android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS,
+                                )
+                                context.startActivity(intent)
+                            } catch (_: Exception) {}
+                        }
+                    }) {
+                        Text("Disable")
+                    }
+                }
+            },
+        )
+
         ListItem(
             headlineContent = { Text("Hey Jarvis") },
             supportingContent = {
