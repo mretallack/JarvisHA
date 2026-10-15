@@ -2,6 +2,7 @@ package uk.org.retallack.jarvis.ui.settings
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,6 +21,7 @@ import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -227,6 +229,42 @@ fun SettingsScreen(
                         }
                     },
                 )
+            },
+        )
+        HorizontalDivider()
+        ListItem(
+            headlineContent = { Text("Wake word sensitivity") },
+            supportingContent = {
+                Column {
+                    Text(
+                        "Detection threshold ${"%.2f".format(0.95f - (state.wakeWordSensitivity * 0.45f))}",
+                    )
+                    Text(
+                        "Move left if \"Hey Jarvis\" triggers on its own. " +
+                            "Move right if it doesn't always respond.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("Fewer false triggers", style = MaterialTheme.typography.labelSmall)
+                        Text("More responsive", style = MaterialTheme.typography.labelSmall)
+                    }
+                    Slider(
+                        value = state.wakeWordSensitivity,
+                        onValueChange = { viewModel.setWakeWordSensitivity(it) },
+                        valueRange = 0f..1f,
+                        enabled = state.wakeWordEnabled,
+                    )
+                    Text(
+                        "Saving restarts the listener.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            },
+            leadingContent = {
+                Icon(Icons.Filled.Tune, contentDescription = "Wake word sensitivity")
             },
         )
         HorizontalDivider()

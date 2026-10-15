@@ -70,6 +70,9 @@ class WakeWordService : Service() {
     lateinit var modelManager: uk.org.retallack.jarvis.voice.ModelManager
 
     @Inject
+    lateinit var wakeWordPreferences: WakeWordPreferences
+
+    @Inject
     lateinit var messageDao: uk.org.retallack.jarvis.data.db.dao.ConversationMessageDao
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -198,6 +201,17 @@ class WakeWordService : Service() {
                 stopSelf()
                 return@launch
             }
+
+            // Apply the user's stored sensitivity, otherwise the engine silently uses its
+            // built-in default and the setting has no effect.
+            try {
+                val sensitivity = wakeWordPreferences.getSensitivity()
+                wakeWordEngine.setSensitivity(sensitivity)
+                Log.i(TAG, "Applied wake word sensitivity: $sensitivity")
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not load wake word sensitivity, using default", e)
+            }
+
             wakeWordEngine.startListening()
             captureAudio()
         }
