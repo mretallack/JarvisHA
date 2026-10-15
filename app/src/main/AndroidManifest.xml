@@ -48,7 +48,6 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.JarvisHA"
         android:enableOnBackInvokedCallback="true"
-        android:largeHeap="true"
         tools:targetApi="34">
 
         <activity
@@ -72,9 +71,20 @@
                 android:resource="@xml/widget_mic_info" />
         </receiver>
 
+        <!--
+            Wake word runs in its own dedicated process (":wakeword").
+
+            Rationale: this keeps the lightweight TFLite wake-word listener out of the
+            same process as the heavy Sherpa-ONNX/Whisper STT pipeline (~160 MB native
+            heap). Previously they shared the main process, so the OS repeatedly killed
+            the whole app (including the wake-word listener) under memory pressure.
+            Isolating the listener also keeps the app's main process free to be evicted
+            without killing wake-word detection.
+        -->
         <service
             android:name=".voice.wakeword.WakeWordService"
             android:exported="false"
+            android:process=":wakeword"
             android:foregroundServiceType="microphone" />
 
     </application>

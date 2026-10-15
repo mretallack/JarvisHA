@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -44,6 +45,8 @@ import uk.org.retallack.jarvis.voice.wakeword.WakeWordService
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
+    private val viewModel: MainViewModel by viewModels()
+
     companion object {
         private const val TAG = "MainActivity"
         // Shared state that the composable can observe
@@ -62,6 +65,19 @@ class MainActivity : ComponentActivity() {
         setContent {
             JarvisApp()
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Returning to foreground: re-warm the STT model if it was released.
+        viewModel.onAppForegroundStateChanged(true)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Leaving the foreground: drop the Whisper model so this process stays
+        // lightweight and is less likely to be killed by the OS.
+        viewModel.onAppForegroundStateChanged(false)
     }
 
     override fun onNewIntent(intent: Intent) {
