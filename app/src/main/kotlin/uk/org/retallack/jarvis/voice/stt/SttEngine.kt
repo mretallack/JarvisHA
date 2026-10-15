@@ -30,6 +30,12 @@ data class SttResult(
     val text: String,
     val isFinal: Boolean,
     val confidence: Float = 1.0f,
+    /**
+     * Wall-clock time this result was produced. Used by consumers to discard stale
+     * results replayed from the engine's `replay = 1` buffer at the start of a new
+     * listening session. Defaults to 0 (unknown) so existing call sites are unaffected.
+     */
+    val timestampMs: Long = 0L,
 )
 
 /**
