@@ -43,6 +43,17 @@ class LiteRtWakeWordEngine @Inject constructor(
         private const val MEL_MODEL = "melspectrogram.tflite"
         private const val EMB_MODEL = "embedding_model.tflite"
         private const val WAKE_MODEL = "hey_jarvis.tflite"
+
+        /**
+         * Detection threshold for a given sensitivity.
+         *
+         * Single source of truth: used both for gating detections and for logging, so the
+         * reported threshold can never drift from the one actually applied.
+         *
+         * 0.0 -> 0.95 (least sensitive), 0.5 -> 0.725 (default), 1.0 -> 0.5 (most sensitive)
+         */
+        fun detectionThreshold(sensitivity: Float): Float =
+            0.95f - (sensitivity.coerceIn(0f, 1f) * 0.45f)
     }
 
     private val _state = MutableStateFlow(WakeWordState.UNINITIALIZED)
@@ -112,7 +123,11 @@ class LiteRtWakeWordEngine @Inject constructor(
     fun getFrameSize(): Int = MEL_INPUT_COUNT
 
     override fun setSensitivity(sensitivity: Float) {
-        this.sensitivity = sensitivity
+        this.sensitivity = sensitivity.coerceIn(0f, 1f)
+        Log.i(
+            TAG,
+            "Sensitivity set to ${this.sensitivity} (detection threshold ${detectionThreshold(this.sensitivity)})",
+        )
     }
 
     /**
@@ -181,10 +196,7 @@ class LiteRtWakeWordEngine @Inject constructor(
     }
 
     fun isDetected(score: Float): Boolean {
-        // Use fixed threshold of 0.8 (same as Dicio)
-        // Sensitivity slider can fine-tune: 0.0 → 0.95, 0.5 → 0.8, 1.0 → 0.5
-        val threshold = 0.95f - (sensitivity * 0.45f)
-        return score > threshold
+        return score > detectionThreshold(sensitivity)
     }
 
     override suspend fun startListening() {
@@ -202,7 +214,7 @@ class LiteRtWakeWordEngine @Inject constructor(
         val score = processFrame(samples)
         // Only log non-zero scores to avoid spam
         if (score > 0.1f) {
-            Log.d(TAG, "Wake word score: $score (threshold: ${0.9f - (sensitivity * 0.8f)})")
+            Log.d(TAG, "Wake word score: $score (threshold: ${detectionThreshold(sensitivity)})")
         }
         if (isDetected(score)) {
             _state.value = WakeWordState.DETECTED
