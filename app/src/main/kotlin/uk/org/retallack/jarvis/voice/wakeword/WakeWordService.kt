@@ -1,5 +1,6 @@
 package uk.org.retallack.jarvis.voice.wakeword
 
+import android.app.Application
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -27,6 +28,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import uk.org.retallack.jarvis.data.db.ConversationSync
+import uk.org.retallack.jarvis.voice.AppForegroundState
 import javax.inject.Inject
 
 /**
@@ -132,8 +135,15 @@ class WakeWordService : Service() {
         super.onCreate()
         createNotificationChannel()
         running = true
-        Log.i(TAG, "WakeWordService created")
+        Log.i(TAG, "WakeWordService created (process=${currentProcessName()})")
     }
+
+    private fun currentProcessName(): String =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            Application.getProcessName()
+        } else {
+            packageName
+        }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
@@ -153,14 +163,15 @@ class WakeWordService : Service() {
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start foreground service", e)
+        } catch (t: Throwable) {
+            Log.e(TAG, "Failed to start foreground service due to background restriction", t)
+            running = false
             stopSelf()
             return START_NOT_STICKY
         }
 
         startListening()
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -195,6 +206,14 @@ class WakeWordService : Service() {
     private fun stopListening() {
         listeningJob?.cancel()
         listeningJob = null
+        releaseAudioRecord()
+        serviceScope.launch {
+            wakeWordEngine.stopListening()
+            wakeWordEngine.release()
+        }
+    }
+
+    private fun releaseAudioRecord() {
         audioRecord?.let {
             try {
                 it.stop()
@@ -204,10 +223,28 @@ class WakeWordService : Service() {
             }
         }
         audioRecord = null
-        serviceScope.launch {
-            wakeWordEngine.stopListening()
-            wakeWordEngine.release()
-        }
+    }
+
+    /**
+     * Suspend the wake-word listener and release the microphone.
+     *
+     * The wake-word detector and the STT engine both open an AudioRecord on the same
+     * input source. Holding two concurrent AudioRecord sessions makes the second one
+     * receive attenuated/silent audio, which made Whisper hallucinate. So we must fully
+     * give up the mic while the STT engine is capturing.
+     */
+    private suspend fun pauseWakeWordCapture() {
+        Log.d(TAG, "Pausing wake word capture to hand the mic to STT")
+        listeningJob?.cancel()
+        listeningJob = null
+        releaseAudioRecord()
+        wakeWordEngine.stopListening()
+    }
+
+    /** Resume wake-word listening after STT has finished with the microphone. */
+    private fun resumeWakeWordCapture() {
+        Log.d(TAG, "Resuming wake word capture")
+        startListening()
     }
 
     @Suppress("MissingPermission")
@@ -316,7 +353,38 @@ class WakeWordService : Service() {
 
         // Process entirely in background: STT → HA → TTS
         serviceScope.launch {
+            // Mark an active session so AppForegroundState keeps the STT model resident
+            // while this headless process handles the command (it has no visible UI).
+            AppForegroundState.beginActiveSession()
             try {
+                // Hand the microphone over to the STT engine: holding two concurrent
+                // AudioRecord sessions on the same source starves the second one.
+                pauseWakeWordCapture()
+                try {
+                    processWakeWordCommand()
+                } finally {
+                    // The main process's Room observer can't see writes from this process,
+                    // so tell it to re-read the conversation history.
+                    ConversationSync.notifyChanged(applicationContext)
+                    resumeWakeWordCapture()
+                }
+            } finally {
+                AppForegroundState.endActiveSession()
+            }
+
+            // Increase backoff after processing to prevent re-trigger
+            lastDetectionTime = System.currentTimeMillis()
+        }
+    }
+
+    /**
+     * Runs the STT → Home Assistant → TTS pipeline for a detected wake word.
+     *
+     * Must be called inside an [AppForegroundState] active session so the STT model is
+     * allowed to stay loaded for the duration.
+     */
+    private suspend fun processWakeWordCommand() {
+        try {
                 // Configure HA client if needed
                 if (!haClient.isConfigured) {
                     val config = connectionRepository.getConnectionConfig()
@@ -325,57 +393,91 @@ class WakeWordService : Service() {
                     } else {
                         Log.e(TAG, "No HA connection configured")
                         ttsEngine.speak("Home Assistant not configured")
-                        return@launch
+                        return
                     }
                 }
 
-                // Initialize STT if needed
+                // Initialize STT if needed. This can take ~2 s when the model is cold, and
+                // it used to block the microphone from opening - so the start of the user's
+                // sentence was lost. Kick it off concurrently instead so audio capture
+                // begins almost immediately; processBufferedAudio waits for it if needed.
                 val modelDir = modelManager.getSttModelDir().absolutePath
-                sttEngine.initialize(modelDir)
+                val modelLoadJob = serviceScope.launch(Dispatchers.IO) {
+                    val t0 = System.currentTimeMillis()
+                    sttEngine.initialize(modelDir)
+                    Log.d(TAG, "Model ready in ${System.currentTimeMillis() - t0}ms (concurrent with capture)")
+                }
+
+                // IMPORTANT: subscribe to the result flow *before* starting to listen.
+                // The engine emits the final result while processing finishes, so a
+                // collector started afterwards would race and miss it entirely - which
+                // caused every wake-word command to end in "I didn't catch that".
+                val finalTextDeferred = kotlinx.coroutines.CompletableDeferred<String?>()
+                // The results flow has replay=1, so it may hand us a *stale* result from
+                // a previous utterance. Ignore anything emitted before this session began.
+                val sessionStartMs = System.currentTimeMillis()
+                val collectorJob = serviceScope.launch {
+                    try {
+                        sttEngine.results.collect { result ->
+                            if (!result.isFinal) return@collect
+                            // Skip replayed results from a previous session.
+                            if (result.timestampMs > 0 && result.timestampMs < sessionStartMs) {
+                                Log.d(TAG, "Ignoring stale replayed STT result: '${result.text}'")
+                                return@collect
+                            }
+                            if (result.confidence > 0f && result.text.isNotBlank()) {
+                                Log.d(TAG, "Wake-word STT result: '${result.text}'")
+                                finalTextDeferred.complete(result.text)
+                            } else if (!finalTextDeferred.isCompleted) {
+                                // Engine-reported failure (e.g. "No speech detected")
+                                Log.d(TAG, "Wake-word STT final with no text: '${result.text}'")
+                                finalTextDeferred.complete(null)
+                            }
+                        }
+                    } catch (_: kotlinx.coroutines.CancellationException) {
+                        // Collector cancelled on completion below - expected.
+                    }
+                }
 
                 // Start listening - this captures audio until silence detected
                 Log.d(TAG, "Starting STT listening...")
                 sttEngine.startListening()
 
-                // Wait for the STT to finish (it stops on silence or manual stop)
-                // Poll the state until it's no longer LISTENING
-                var timeoutMs = 15000L // 15 second max
+                // Wait for the STT to finish (it stops on silence or manual stop).
+                // Poll the state until it's no longer LISTENING.
+                val maxListenMs = 15000L // 15 second max
                 val startTime = System.currentTimeMillis()
                 while (sttEngine.state.value == uk.org.retallack.jarvis.voice.stt.SttState.LISTENING ||
                     sttEngine.state.value == uk.org.retallack.jarvis.voice.stt.SttState.PROCESSING) {
                     kotlinx.coroutines.delay(200)
-                    if (System.currentTimeMillis() - startTime > timeoutMs) {
+                    if (System.currentTimeMillis() - startTime > maxListenMs) {
                         Log.w(TAG, "STT timeout, forcing stop")
                         sttEngine.stopListening()
                         break
                     }
                 }
 
-                // Collect the final result immediately
-                var finalText: String? = null
-                try {
-                    kotlinx.coroutines.withTimeout(5000) {
-                        sttEngine.results.collect { result ->
-                            if (result.isFinal && result.confidence > 0f && result.text.isNotBlank()) {
-                                finalText = result.text
-                                throw kotlinx.coroutines.CancellationException("Found")
-                            }
-                        }
+                // Now wait for the result (already being collected from before listening).
+                val finalText: String? = try {
+                    kotlinx.coroutines.withTimeout(10000L) {
+                        finalTextDeferred.await()
                     }
                 } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                    Log.d(TAG, "No STT result within timeout")
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    if (e.message != "Found") throw e
+                    Log.d(TAG, "Timed out waiting for STT result")
+                    null
+                } finally {
+                    collectorJob.cancel()
                 }
 
-                if (finalText.isNullOrBlank()) {
+                val recognisedText = finalText
+                if (recognisedText.isNullOrBlank()) {
                     Log.d(TAG, "No speech detected after wake word")
                     ttsEngine.speak("I didn't catch that")
-                    return@launch
+                    return
                 }
 
                 // Clean and process command
-                val cleanedText = finalText!!.trim()
+                val cleanedText = recognisedText.trim()
                     .removeSuffix(".").removeSuffix(",")
                     .removeSuffix("!").removeSuffix("?")
                     .trim().lowercase()
@@ -387,7 +489,7 @@ class WakeWordService : Service() {
                 if (cleanedText.isBlank() || cleanedText.startsWith("[") || cleanedText.startsWith("(")) {
                     Log.d(TAG, "Filtered out non-speech: '$cleanedText'")
                     ttsEngine.speak("I didn't catch that. Please try again after the beep.")
-                    return@launch
+                    return
                 }
 
                 Log.i(TAG, "Processing command: '$cleanedText'")
@@ -396,6 +498,8 @@ class WakeWordService : Service() {
                 messageDao.insert(uk.org.retallack.jarvis.data.db.entity.ConversationMessageDb(
                     text = cleanedText, isUser = true
                 ))
+                // Show it in the UI immediately, before the slower HA round-trip.
+                ConversationSync.notifyChanged(applicationContext)
 
                 // Send to HA
                 val result = conversationRepository.processText(cleanedText)
@@ -435,10 +539,6 @@ class WakeWordService : Service() {
                 Log.e(TAG, "Error processing wake word command", e)
                 try { ttsEngine.speak("Sorry, something went wrong") } catch (_: Exception) {}
             }
-
-            // Increase backoff after processing to prevent re-trigger
-            lastDetectionTime = System.currentTimeMillis()
-        }
     }
 
     private fun wakeScreen() {
