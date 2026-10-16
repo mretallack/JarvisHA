@@ -22,9 +22,13 @@ import java.util.concurrent.atomic.AtomicInteger
  *    service and legitimately needs the model while handling a command, even though it
  *    has no UI. [beginActiveSession] / [endActiveSession] tell us that.
  *
- * The model is only released when *neither* signal says it is needed. Note the
- * distinction from a naive "is the UI visible" check: no UI in this process does NOT
- * mean the app is idle - a wake-word service handling a command is very much active.
+ * The model is released as soon as a command finishes, to keep the listener process as
+ * small as possible. This device is under heavy memory pressure and the low-memory killer
+ * will reap a large background process; a small listener survives. The cost is a ~2.5 s
+ * model reload on the next command, which is preferable to the listener being killed.
+ *
+ * Note the distinction from a naive "is the UI visible" check: no UI in this process does
+ * NOT mean the app is idle - a wake-word service handling a command is very much active.
  */
 object AppForegroundState {
 

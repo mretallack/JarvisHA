@@ -37,6 +37,9 @@
     <!-- Vibration feedback for wake word detection -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- Restore the wake-word listener after reboot / app update -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <application
         android:name=".JarvisApplication"
         android:allowBackup="false"
@@ -69,6 +72,18 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_mic_info" />
+        </receiver>
+
+        <!-- Restore the wake-word listener after reboot or app update -->
+        <receiver
+            android:name=".voice.wakeword.BootReceiver"
+            android:exported="false"
+            android:directBootAware="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
         </receiver>
 
         <!--
