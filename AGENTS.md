@@ -32,6 +32,10 @@ OpenWakeWord via LiteRT/TFLite.
 - **STT result delivery is a race trap.** Subscribe to `sttEngine.results` *before*
   starting capture, or the result is missed entirely. `SttResult.timestampMs` exists to
   discard stale replays.
+- **Wake-word sensitivity is counter-intuitive.** LOWER sensitivity = HIGHER detection
+  threshold = FEWER false positives. The threshold is single-sourced in
+  `LiteRtWakeWordEngine.detectionThreshold()` so the decision and the log cannot drift.
+  The setting is persisted by `WakeWordPreferences` and applied by `WakeWordService`.
 
 ## Testing device (Moto G52) is memory-constrained
 
@@ -57,6 +61,14 @@ adb logcat -d -v threadtime | grep -E "SherpaSTT|WakeWordService|LiteRt"
 
 See the log markers table in the investigation doc.
 
+Useful forensics when the logs have already rotated:
+
+```bash
+adb shell dumpsys activity exit-info uk.org.retallack.jarvis   # why the process died
+adb shell dumpsys activity services uk.org.retallack.jarvis    # stopIfKilled, FGS state
+adb shell dumpsys package  uk.org.retallack.jarvis | grep -A3 BootReceiver
+```
+
 ## Build & install
 
 ```bash
@@ -74,3 +86,5 @@ the app is launched — not a bug.
 - Tests live in `app/src/test/kotlin/...`. 184 tests currently pass; keep them green.
 - Prefer fixing the root cause over the symptom — the investigation log shows a case
   where a symptom fix (repetition collapse) masked a deeper cause (mic contention).
+- Run a clean build plus the full test suite before committing:
+  `./gradlew clean :app:assembleDebug :app:testDebugUnitTest`.
