@@ -21,6 +21,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -117,13 +118,45 @@ class SherpaOnnxSttEngine @Inject constructor(
     override val results: Flow<SttResult> = _results
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Dedicated single-thread dispatcher for model loading.
+     *
+     * Loading takes ~2.5 s when cold. If that work runs on [Dispatchers.IO] it contends
+     * with the audio-capture setup that shares the same pool, delaying the microphone from
+     * opening. Keeping it on its own thread lets capture start immediately.
+     */
+    private val modelLoadDispatcher =
+        java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+            Thread(r, "whisper-model-loader").apply { isDaemon = true }
+        }.asCoroutineDispatcher()
+
     private val modelLoadMutex = kotlinx.coroutines.sync.Mutex()
     private var recognizer: OfflineRecognizer? = null
     private var modelDir: String? = null
     private var audioRecord: AudioRecord? = null
     private var recordingJob: Job? = null
     private var idleJob: Job? = null
-    private val idleTimeoutMs = 30000L // Release model after 30 seconds of inactivity
+
+    /**
+     * How long the model stays resident after the last use.
+     *
+     * Kept short on purpose. This device is under heavy memory pressure and the low-memory
+     * killer reaps large background processes, so the listener must stay small. The cost is
+     * a ~2.5 s reload on the next command, which is preferable to the listener being killed
+     * and wake word silently dying.
+     */
+    private val idleTimeoutMs = 30 * 1000L // 30 seconds
+
+    /**
+     * When set, audio captured before this timestamp is discarded.
+     *
+     * Used to drop the wake-word confirmation beep, which plays through the speaker just
+     * as the microphone opens and would otherwise be recorded as the start of the user's
+     * utterance - causing the first word to be clipped or mis-transcribed.
+     */
+    @Volatile
+    private var discardAudioBeforeMs: Long = 0L
 
     /**
      * True when speech was actually detected during the current recording.
@@ -148,7 +181,7 @@ class SherpaOnnxSttEngine @Inject constructor(
                 return@withLock true
             }
 
-            return@withLock withContext(Dispatchers.IO) {
+            return@withLock withContext(modelLoadDispatcher) {
                 try {
                     modelDir = if (modelPath.isNotBlank()) {
                         modelPath
@@ -200,7 +233,14 @@ class SherpaOnnxSttEngine @Inject constructor(
             }
         }
     }
-    /** Load the Whisper model into memory (called on demand) */    private fun scheduleIdleRelease() {
+
+    /**
+     * Schedule the model to be released after a period of inactivity.
+     *
+     * Releases immediately if the app is not in the foreground, otherwise after
+     * [idleTimeoutMs] of being READY with no use.
+     */
+    private fun scheduleIdleRelease() {
         idleJob?.cancel()
 
         // Never keep the model resident while the app is in the background. Holding
@@ -263,10 +303,40 @@ class SherpaOnnxSttEngine @Inject constructor(
     private suspend fun awaitRecognizer(): OfflineRecognizer? {
         recognizer?.let { return it }
         return modelLoadMutex.withLock {
-            recognizer ?: loadModel()?.also {
+            recognizer ?: withContext(modelLoadDispatcher) { loadModel() }?.also {
                 recognizer = it
             }
         }
+    }
+
+    /**
+     * Discard captured audio up to [untilMs] (wall-clock).
+     *
+     * Call this before starting to listen when a confirmation beep will play, so the beep
+     * itself is not treated as the beginning of the user's speech.
+     */
+    override fun discardAudioUntil(untilMs: Long) {
+        discardAudioBeforeMs = untilMs
+    }
+
+    /**
+     * Ensure the recognizer is loaded and ready.
+     *
+     * Used to warm the model up *before* prompting the user to speak, so that no model
+     * load sits in the critical path between the prompt and the start of capture.
+     */
+    override suspend fun warmUp(): Boolean {
+        if (modelDir.isNullOrBlank()) {
+            Log.w(TAG, "warmUp called before initialize - no model path known")
+            return false
+        }
+        val loaded = awaitRecognizer() != null
+        if (loaded) {
+            scheduleIdleRelease()
+        } else {
+            Log.w(TAG, "warmUp failed to load the model")
+        }
+        return loaded
     }
 
     private fun loadModel(): OfflineRecognizer? {
@@ -374,6 +444,7 @@ class SherpaOnnxSttEngine @Inject constructor(
         var hasDetectedSpeech = false
         var peakAmplitude = 0
         var levelLogCounter = 0
+        var captureWindowOpened = false
 
         try {
             while (currentCoroutineContext().isActive && _state.value == SttState.LISTENING) {
@@ -386,6 +457,17 @@ class SherpaOnnxSttEngine @Inject constructor(
                 // Convert to float and buffer
                 val floatSamples = FloatArray(shortsRead) { i ->
                     shortBuffer[i] / 32768.0f
+                }
+
+                // Drop the wake-word confirmation beep, which plays through the speaker
+                // just as the microphone opens. Recording it made the first word of the
+                // user's command get clipped or mis-aligned.
+                if (System.currentTimeMillis() < discardAudioBeforeMs) {
+                    continue
+                }
+                if (!captureWindowOpened) {
+                    captureWindowOpened = true
+                    Log.i(TAG, "Capture window open (beep discarded)")
                 }
                 audioBuffer.add(floatSamples)
                 totalSamples += shortsRead
@@ -553,6 +635,7 @@ class SherpaOnnxSttEngine @Inject constructor(
         idleJob = null
         recognizer = null
         audioBuffer.clear()
+        discardAudioBeforeMs = 0L
         _state.value = SttState.UNINITIALIZED
     }
 

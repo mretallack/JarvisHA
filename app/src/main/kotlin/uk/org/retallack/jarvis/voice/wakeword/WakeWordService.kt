@@ -80,7 +80,16 @@ class WakeWordService : Service() {
     private var audioRecord: AudioRecord? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
+    @Volatile
     private var lastDetectionTime: Long = 0L
+
+    /** True when the user explicitly stopped the service; suppresses sticky restart. */
+    @Volatile
+    private var userStopped = false
+
+    /** Number of times the service has been (re)started, for diagnostics. */
+    @Volatile
+    private var restartCount = 0
 
     companion object {
         private const val TAG = "WakeWordService"
@@ -95,6 +104,12 @@ class WakeWordService : Service() {
         private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
         private const val FRAME_SIZE = 1152 // 72ms at 16kHz (matches OpenWakeWord mel input)
         private const val DETECTION_BACKOFF_MS = 15000L
+
+        /** Length of the "speak now" prompt tone. */
+        private const val BEEP_DURATION_MS = 300L
+
+        /** Extra margin after the tone before captured audio is kept. */
+        private const val BEEP_MARGIN_MS = 150L
 
         @Volatile
         private var running = false
@@ -149,10 +164,20 @@ class WakeWordService : Service() {
         }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
+        // Distinguish a user-initiated stop from an automatic restart.
+        userStopped = intent?.action == ACTION_STOP
+
+        if (userStopped) {
             Log.i(TAG, "Stop action received")
             stopSelf()
             return START_NOT_STICKY
+        }
+
+        if (intent == null) {
+            // Redelivered by the system after we were killed (START_STICKY). This is the
+            // path that brings wake word back if the low-memory killer reaps us.
+            restartCount++
+            Log.i(TAG, "Restarted by system after being killed (null intent), restart #$restartCount")
         }
 
         val notification = createNotification()
@@ -174,18 +199,33 @@ class WakeWordService : Service() {
         }
 
         startListening()
-        return START_NOT_STICKY
+        // START_STICKY so the system restarts us (with a null intent) if this process is
+        // killed for memory. Without it, a single low-memory kill left wake word silently
+        // dead until the app was next opened.
+        return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        Log.i(TAG, "WakeWordService destroyed")
+        Log.i(TAG, "WakeWordService destroyed (userStopped=$userStopped, restarts=$restartCount)")
         running = false
         stopListening()
         releaseWakeLock()
         serviceScope.cancel()
         super.onDestroy()
+    }
+
+    /**
+     * Called when the user swipes the app away from recents.
+     *
+     * The listener is intentionally kept running (that is the point of a wake word), but
+     * we must not be left holding the microphone in a bad state. Returning the same
+     * sticky semantics keeps the foreground service alive.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        Log.i(TAG, "Task removed; keeping wake word listener running")
     }
 
     private fun startListening() {
@@ -334,48 +374,53 @@ class WakeWordService : Service() {
 
         Log.i(TAG, "Wake word detected! Processing in background...")
 
-        // Play a short vibration AND tone to indicate wake word heard
-        try {
-            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                vibrator.vibrate(android.os.VibrationEffect.createOneShot(200, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
-            } else {
-                @Suppress("DEPRECATION")
-                vibrator.vibrate(200)
-            }
-            Log.d(TAG, "Vibration triggered")
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not vibrate", e)
-        }
-
-        // Wait for vibration to be felt before playing beep
-        Thread.sleep(250)
-
-        // Play a short beep to tell user to speak now
-        try {
-            val toneGenerator = android.media.ToneGenerator(
-                android.media.AudioManager.STREAM_MUSIC, 100
-            )
-            toneGenerator.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 300)
-            // Delay to let user hear the beep before STT starts
-            Thread.sleep(300)
-            toneGenerator.release()
-            Log.d(TAG, "Beep played")
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not play tone", e)
-        }
-
-        // Process entirely in background: STT → HA → TTS
+        // Everything runs off the audio thread from here.
         serviceScope.launch {
             // Mark an active session so AppForegroundState keeps the STT model resident
             // while this headless process handles the command (it has no visible UI).
             AppForegroundState.beginActiveSession()
             try {
-                // Hand the microphone over to the STT engine: holding two concurrent
-                // AudioRecord sessions on the same source starves the second one.
+                // 1. Free the microphone from the wake-word listener. Holding two
+                //    concurrent AudioRecord sessions on the same source starves the
+                //    second one.
                 pauseWakeWordCapture()
+
                 try {
-                    processWakeWordCommand()
+                    // 2. Load/warm the model *before* prompting, so no ~2.5 s load sits
+                    //    between the beep and the start of the user's speech.
+                    val modelDir = modelManager.getSttModelDir().absolutePath
+                    val t0 = System.currentTimeMillis()
+                    val warm = sttEngine.initialize(modelDir)
+                    Log.i(
+                        TAG,
+                        "STT warm before prompt: $warm (took ${System.currentTimeMillis() - t0}ms)",
+                    )
+                    if (!warm) {
+                        Log.e(TAG, "STT model unavailable - command cannot be processed")
+                        ttsEngine.speak("Speech model not available")
+                        return@launch
+                    }
+
+                    // 3. Subscribe to results *before* capture starts. The engine emits
+                    //    the final result as processing completes, so subscribing late
+                    //    races and misses it entirely.
+                    val sessionStartMs = System.currentTimeMillis()
+                    val finalTextDeferred = kotlinx.coroutines.CompletableDeferred<String?>()
+                    val collectorJob = subscribeToSttResults(finalTextDeferred, sessionStartMs)
+
+                    // 4. Start capturing, discarding the prompt tone that is about to
+                    //    play through the speaker.
+                    sttEngine.discardAudioUntil(
+                        System.currentTimeMillis() + BEEP_DURATION_MS + BEEP_MARGIN_MS,
+                    )
+                    sttEngine.startListening()
+                    Log.i(TAG, "Capture started; prompting user now")
+
+                    // 5. Prompt only once the microphone is genuinely live.
+                    vibrateForWakeWord()
+                    playPromptTone()
+
+                    processWakeWordCommand(finalTextDeferred, collectorJob)
                 } finally {
                     // The main process's Room observer can't see writes from this process,
                     // so tell it to re-read the conversation history.
@@ -391,13 +436,91 @@ class WakeWordService : Service() {
         }
     }
 
+    /** Short vibration so the user knows the wake word registered. */
+    private fun vibrateForWakeWord() {
+        try {
+            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                vibrator.vibrate(
+                    android.os.VibrationEffect.createOneShot(
+                        200,
+                        android.os.VibrationEffect.DEFAULT_AMPLITUDE,
+                    ),
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(200)
+            }
+            Log.d(TAG, "Vibration triggered")
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not vibrate", e)
+        }
+    }
+
+    /**
+     * Play the "speak now" tone.
+     *
+     * Called only after capture has started, so the prompt coincides with a live
+     * microphone. The tone itself is excluded from the recording via
+     * [SttEngine.discardAudioUntil].
+     */
+    private fun playPromptTone() {
+        try {
+            val toneGenerator = android.media.ToneGenerator(
+                android.media.AudioManager.STREAM_MUSIC, 100,
+            )
+            toneGenerator.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, BEEP_DURATION_MS.toInt())
+            Thread.sleep(BEEP_DURATION_MS)
+            toneGenerator.release()
+            Log.i(TAG, "Beep played - microphone is live")
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not play tone", e)
+        }
+    }
+
+    /**
+     * Subscribe to STT results into [deferred], ignoring anything emitted before
+     * [sessionStartMs] (the results flow has replay=1 and can hand back a stale result
+     * from a previous utterance).
+     *
+     * Must be called *before* capture starts - the engine emits the final result as
+     * processing finishes, so a late subscriber races and misses it.
+     */
+    private fun subscribeToSttResults(
+        deferred: kotlinx.coroutines.CompletableDeferred<String?>,
+        sessionStartMs: Long,
+    ): Job = serviceScope.launch {
+        try {
+            sttEngine.results.collect { result ->
+                if (!result.isFinal) return@collect
+                if (result.timestampMs > 0 && result.timestampMs < sessionStartMs) {
+                    Log.d(TAG, "Ignoring stale replayed STT result: '${result.text}'")
+                    return@collect
+                }
+                if (result.confidence > 0f && result.text.isNotBlank()) {
+                    Log.d(TAG, "Wake-word STT result: '${result.text}'")
+                    deferred.complete(result.text)
+                } else if (!deferred.isCompleted) {
+                    Log.d(TAG, "Wake-word STT final with no text: '${result.text}'")
+                    deferred.complete(null)
+                }
+            }
+        } catch (_: kotlinx.coroutines.CancellationException) {
+            // Collector cancelled on completion - expected.
+        }
+    }
+
     /**
      * Runs the STT → Home Assistant → TTS pipeline for a detected wake word.
      *
-     * Must be called inside an [AppForegroundState] active session so the STT model is
-     * allowed to stay loaded for the duration.
+     * Capture is already running and the result collector is already subscribed; the
+     * model is already warm. Must be called inside an [AppForegroundState] active session
+     * so the STT model is allowed to stay loaded for the duration.
      */
-    private suspend fun processWakeWordCommand() {
+    private suspend fun processWakeWordCommand(
+        finalTextDeferred: kotlinx.coroutines.CompletableDeferred<String?>,
+        collectorJob: Job,
+    ) {
         try {
                 // Configure HA client if needed
                 if (!haClient.isConfigured) {
@@ -411,51 +534,10 @@ class WakeWordService : Service() {
                     }
                 }
 
-                // Initialize STT if needed. This can take ~2 s when the model is cold, and
-                // it used to block the microphone from opening - so the start of the user's
-                // sentence was lost. Kick it off concurrently instead so audio capture
-                // begins almost immediately; processBufferedAudio waits for it if needed.
-                val modelDir = modelManager.getSttModelDir().absolutePath
-                val modelLoadJob = serviceScope.launch(Dispatchers.IO) {
-                    val t0 = System.currentTimeMillis()
-                    sttEngine.initialize(modelDir)
-                    Log.d(TAG, "Model ready in ${System.currentTimeMillis() - t0}ms (concurrent with capture)")
-                }
 
-                // IMPORTANT: subscribe to the result flow *before* starting to listen.
-                // The engine emits the final result while processing finishes, so a
-                // collector started afterwards would race and miss it entirely - which
-                // caused every wake-word command to end in "I didn't catch that".
-                val finalTextDeferred = kotlinx.coroutines.CompletableDeferred<String?>()
-                // The results flow has replay=1, so it may hand us a *stale* result from
-                // a previous utterance. Ignore anything emitted before this session began.
-                val sessionStartMs = System.currentTimeMillis()
-                val collectorJob = serviceScope.launch {
-                    try {
-                        sttEngine.results.collect { result ->
-                            if (!result.isFinal) return@collect
-                            // Skip replayed results from a previous session.
-                            if (result.timestampMs > 0 && result.timestampMs < sessionStartMs) {
-                                Log.d(TAG, "Ignoring stale replayed STT result: '${result.text}'")
-                                return@collect
-                            }
-                            if (result.confidence > 0f && result.text.isNotBlank()) {
-                                Log.d(TAG, "Wake-word STT result: '${result.text}'")
-                                finalTextDeferred.complete(result.text)
-                            } else if (!finalTextDeferred.isCompleted) {
-                                // Engine-reported failure (e.g. "No speech detected")
-                                Log.d(TAG, "Wake-word STT final with no text: '${result.text}'")
-                                finalTextDeferred.complete(null)
-                            }
-                        }
-                    } catch (_: kotlinx.coroutines.CancellationException) {
-                        // Collector cancelled on completion below - expected.
-                    }
-                }
-
-                // Start listening - this captures audio until silence detected
-                Log.d(TAG, "Starting STT listening...")
-                sttEngine.startListening()
+                // Capture was already started (before the prompt tone) so the microphone
+                // was live from the moment the user heard the beep.
+                Log.d(TAG, "Awaiting speech (capture already running)")
 
                 // Wait for the STT to finish (it stops on silence or manual stop).
                 // Poll the state until it's no longer LISTENING.

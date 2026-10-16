@@ -83,4 +83,22 @@ interface SttEngine {
      * Check if the required model is available.
      */
     fun isModelAvailable(modelPath: String): Boolean
+
+    /**
+     * Ensure the model is loaded and ready ahead of time.
+     *
+     * Lets callers warm the engine *before* prompting the user to speak, so no model load
+     * sits in the critical path between the prompt and the start of capture.
+     *
+     * @return true if the engine is ready
+     */
+    suspend fun warmUp(): Boolean = true
+
+    /**
+     * Discard captured audio until the given wall-clock time.
+     *
+     * Used to exclude a prompt/confirmation tone from the recording when the microphone
+     * opens at the same moment the tone plays.
+     */
+    fun discardAudioUntil(untilMs: Long) {}
 }
