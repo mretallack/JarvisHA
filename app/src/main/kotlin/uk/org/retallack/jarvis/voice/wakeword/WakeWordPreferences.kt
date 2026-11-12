@@ -35,6 +35,8 @@ class WakeWordPreferences @Inject constructor(
 
     suspend fun getEnabled(): Boolean = isEnabled.first()
 
+    suspend fun getSensitivity(): Float = sensitivity.first()
+
     suspend fun setEnabled(enabled: Boolean) {
         context.wakeWordPrefsStore.edit { prefs ->
             prefs[Keys.ENABLED] = enabled

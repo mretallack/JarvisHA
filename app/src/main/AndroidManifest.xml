@@ -26,6 +26,7 @@
 
     <!-- Wake lock for screen wake on detection -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- Biometric authentication -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
@@ -35,6 +36,9 @@
 
     <!-- Vibration feedback for wake word detection -->
     <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Restore the wake-word listener after reboot / app update -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:name=".JarvisApplication"
@@ -47,7 +51,6 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.JarvisHA"
         android:enableOnBackInvokedCallback="true"
-        android:largeHeap="true"
         tools:targetApi="34">
 
         <activity
@@ -71,9 +74,32 @@
                 android:resource="@xml/widget_mic_info" />
         </receiver>
 
+        <!-- Restore the wake-word listener after reboot or app update -->
+        <receiver
+            android:name=".voice.wakeword.BootReceiver"
+            android:exported="false"
+            android:directBootAware="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+            Wake word runs in its own dedicated process (":wakeword").
+
+            Rationale: this keeps the lightweight TFLite wake-word listener out of the
+            same process as the heavy Sherpa-ONNX/Whisper STT pipeline (~160 MB native
+            heap). Previously they shared the main process, so the OS repeatedly killed
+            the whole app (including the wake-word listener) under memory pressure.
+            Isolating the listener also keeps the app's main process free to be evicted
+            without killing wake-word detection.
+        -->
         <service
             android:name=".voice.wakeword.WakeWordService"
             android:exported="false"
+            android:process=":wakeword"
             android:foregroundServiceType="microphone" />
 
     </application>

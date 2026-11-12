@@ -21,6 +21,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -28,9 +29,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import uk.org.retallack.jarvis.data.repository.ConnectionRepository
 import uk.org.retallack.jarvis.data.repository.SttSettings
+import uk.org.retallack.jarvis.voice.AppForegroundState
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -51,6 +54,61 @@ class SherpaOnnxSttEngine @Inject constructor(
         private const val TAG = "SherpaSTT"
         private const val SAMPLE_RATE = 16000
         private const val CHUNK_SIZE = 3200 // 200ms at 16kHz
+
+        /**
+         * Collapse Whisper's runaway repetition loops.
+         *
+         * Whisper occasionally fails to emit an end-of-text token and repeats the same
+         * phrase many times, e.g. "turn kitchen radio on turn kitchen radio on ..." x31.
+         * Sending that to Home Assistant guarantees "No matching devices found".
+         *
+         * If the whole string is a whole-number repetition of a shorter phrase, shrink it
+         * to a single occurrence. If there is no such exact period, fall back to removing
+         * immediate duplicate consecutive words.
+         */
+        internal fun collapseRepetitions(text: String): String {
+            if (text.isBlank()) return text
+
+            val words = text.split(" ").filter { it.isNotBlank() }
+            if (words.isEmpty()) return text
+
+            collapseWordLoop(words)?.let { return it }
+
+            // Fallback: dedupe immediately-repeated consecutive words.
+            val out = mutableListOf<String>()
+            for (word in words) {
+                if (out.isEmpty() || !out.last().equals(word, ignoreCase = true)) {
+                    out.add(word)
+                }
+            }
+            return out.joinToString(" ")
+        }
+
+        /**
+         * If [words] is a whole-number repetition of a shorter token sequence, return a
+         * single occurrence. Otherwise null.
+         */
+        private fun collapseWordLoop(words: List<String>): String? {
+            val n = words.size
+            if (n < 4) return null
+            for (period in 1..(n / 2)) {
+                if (n % period != 0) continue
+                val rep = n / period
+                if (rep < 3) continue // require at least 3 repeats to be confident
+                var matches = true
+                for (i in period until n) {
+                    if (!words[i].equals(words[i % period], ignoreCase = true)) {
+                        matches = false
+                        break
+                    }
+                }
+                if (matches) {
+                    Log.d(TAG, "Collapsed Whisper repetition loop: ${words.size} words -> $period")
+                    return words.subList(0, period).joinToString(" ")
+                }
+            }
+            return null
+        }
     }
 
     private val _state = MutableStateFlow(SttState.UNINITIALIZED)
@@ -60,10 +118,53 @@ class SherpaOnnxSttEngine @Inject constructor(
     override val results: Flow<SttResult> = _results
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Dedicated single-thread dispatcher for model loading.
+     *
+     * Loading takes ~2.5 s when cold. If that work runs on [Dispatchers.IO] it contends
+     * with the audio-capture setup that shares the same pool, delaying the microphone from
+     * opening. Keeping it on its own thread lets capture start immediately.
+     */
+    private val modelLoadDispatcher =
+        java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+            Thread(r, "whisper-model-loader").apply { isDaemon = true }
+        }.asCoroutineDispatcher()
+
+    private val modelLoadMutex = kotlinx.coroutines.sync.Mutex()
     private var recognizer: OfflineRecognizer? = null
     private var modelDir: String? = null
     private var audioRecord: AudioRecord? = null
     private var recordingJob: Job? = null
+    private var idleJob: Job? = null
+
+    /**
+     * How long the model stays resident after the last use.
+     *
+     * Kept short on purpose. This device is under heavy memory pressure and the low-memory
+     * killer reaps large background processes, so the listener must stay small. The cost is
+     * a ~2.5 s reload on the next command, which is preferable to the listener being killed
+     * and wake word silently dying.
+     */
+    private val idleTimeoutMs = 30 * 1000L // 30 seconds
+
+    /**
+     * When set, audio captured before this timestamp is discarded.
+     *
+     * Used to drop the wake-word confirmation beep, which plays through the speaker just
+     * as the microphone opens and would otherwise be recorded as the start of the user's
+     * utterance - causing the first word to be clipped or mis-transcribed.
+     */
+    @Volatile
+    private var discardAudioBeforeMs: Long = 0L
+
+    /**
+     * True when speech was actually detected during the current recording.
+     * Used to avoid transcribing clips that contain no speech - Whisper hallucinates
+     * (repetition loops / "[ Inaudible ]") when fed near-silent audio.
+     */
+    @Volatile
+    private var hasDetectedSpeechThisRecording = false
 
     // Configurable settings loaded from DataStore on each startListening()
     private var currentSettings: SttSettings = SttSettings()
@@ -72,54 +173,172 @@ class SherpaOnnxSttEngine @Inject constructor(
     private val audioBuffer = mutableListOf<FloatArray>()
 
     override suspend fun initialize(modelPath: String): Boolean {
-        // Don't re-initialize if already ready or listening
-        if (_state.value == SttState.READY || _state.value == SttState.LISTENING) {
-            Log.d(TAG, "Already initialized, skipping re-init")
-            return true
-        }
+        return modelLoadMutex.withLock {
+            // Already loaded (e.g. capture started first and awaitRecognizer beat us here).
+            if (recognizer != null) {
+                Log.d(TAG, "Already initialized, skipping re-init")
+                if (_state.value == SttState.UNINITIALIZED) _state.value = SttState.READY
+                return@withLock true
+            }
 
-        return withContext(Dispatchers.IO) {
-            try {
-                modelDir = if (modelPath.isNotBlank()) {
-                    modelPath
-                } else {
-                    File(context.filesDir, "models/stt").absolutePath
-                }
+            return@withLock withContext(modelLoadDispatcher) {
+                try {
+                    modelDir = if (modelPath.isNotBlank()) {
+                        modelPath
+                    } else {
+                        modelDir ?: File(context.filesDir, "models/stt").absolutePath
+                    }
 
-                if (!isModelAvailable(modelDir!!)) {
-                    Log.w(TAG, "Model files not found at $modelDir")
+                    if (!isModelAvailable(modelDir!!)) {
+                        Log.w(TAG, "Model files not found at $modelDir")
+                        _state.value = SttState.ERROR
+                        _results.tryEmit(
+                            SttResult(
+                                text = "STT model not downloaded. Please download from Settings.",
+                                isFinal = true,
+                                confidence = 0f,
+                            ),
+                        )
+                        return@withContext false
+                    }
+
+                    // Pre-load Whisper model so the first utterance isn't delayed.
+                    Log.i(TAG, "Pre-loading Whisper model into memory...")
+                    recognizer = loadModel()
+                    if (recognizer == null) {
+                        _state.value = SttState.ERROR
+                        _results.tryEmit(
+                            SttResult(text = "Failed to load speech model", isFinal = true, confidence = 0f)
+                        )
+                        return@withContext false
+                    }
+                    if (_state.value != SttState.LISTENING && _state.value != SttState.PROCESSING) {
+                        _state.value = SttState.READY
+                    }
+                    Log.i(TAG, "Sherpa-ONNX Whisper ready and pre-loaded (model at $modelDir)")
+                    scheduleIdleRelease()
+                    true
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to initialize Sherpa-ONNX Whisper", e)
                     _state.value = SttState.ERROR
                     _results.tryEmit(
                         SttResult(
-                            text = "STT model not downloaded. Please download from Settings.",
+                            text = "STT initialization failed: ${e.message}",
                             isFinal = true,
                             confidence = 0f,
                         ),
                     )
-                    return@withContext false
+                    false
                 }
-
-                // Don't load model yet — load on demand when startListening is called
-                // This saves ~90MB RAM when idle
-                _state.value = SttState.READY
-                Log.i(TAG, "Sherpa-ONNX Whisper ready (model at $modelDir, will load on demand)")
-                true
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to initialize Sherpa-ONNX Whisper", e)
-                _state.value = SttState.ERROR
-                _results.tryEmit(
-                    SttResult(
-                        text = "STT initialization failed: ${e.message}",
-                        isFinal = true,
-                        confidence = 0f,
-                    ),
-                )
-                false
             }
         }
     }
 
-    /** Load the Whisper model into memory (called on demand) */
+    /**
+     * Schedule the model to be released after a period of inactivity.
+     *
+     * Releases immediately if the app is not in the foreground, otherwise after
+     * [idleTimeoutMs] of being READY with no use.
+     */
+    private fun scheduleIdleRelease() {
+        idleJob?.cancel()
+
+        // Never keep the model resident while the app is in the background. Holding
+        // ~160 MB of native heap in a background process makes it a prime target for
+        // the OS low-memory killer.
+        val busy = _state.value == SttState.LISTENING || _state.value == SttState.PROCESSING
+        if (!busy && !AppForegroundState.isAppForeground) {
+            Log.d(TAG, "App not in foreground, releasing Whisper model to free memory")
+            releaseModel()
+            return
+        }
+
+        idleJob = scope.launch {
+            delay(idleTimeoutMs)
+            if (_state.value == SttState.READY) {
+                Log.d(TAG, "Idle timeout reached, releasing Whisper model to free memory")
+                releaseModel()
+            }
+        }
+    }
+
+    /** Release the native Whisper model and reset to UNINITIALIZED. */
+    private fun releaseModel() {
+        idleJob?.cancel()
+        idleJob = null
+        recognizer = null
+        if (_state.value == SttState.READY || _state.value == SttState.ERROR) {
+            _state.value = SttState.UNINITIALIZED
+        }
+    }
+
+    /**
+     * Called when the app moves between foreground and background.
+     *
+     * On backgrounding we immediately drop the Whisper model so the process stays
+     * lightweight and is far less likely to be killed while running the wake-word
+     * service. On returning to the foreground we transparently re-initialise so the
+     * first voice command is still fast.
+     */
+    fun onAppForegroundStateChanged(isForeground: Boolean) {
+        if (isForeground) {
+            if (_state.value == SttState.UNINITIALIZED) {
+                scope.launch { initialize(modelDir ?: "") }
+            }
+        } else if (!AppForegroundState.hasActiveSession &&
+            _state.value != SttState.LISTENING &&
+            _state.value != SttState.PROCESSING
+        ) {
+            Log.d(TAG, "App backgrounded, releasing Whisper model to free memory")
+            releaseModel()
+        }
+    }
+
+    /**
+     * Return a ready recognizer, loading it if necessary.
+     *
+     * Serialised with a mutex so that a concurrent [initialize] (triggered when capture
+     * starts before the model is warm) can't cause two loads at once.
+     */
+    private suspend fun awaitRecognizer(): OfflineRecognizer? {
+        recognizer?.let { return it }
+        return modelLoadMutex.withLock {
+            recognizer ?: withContext(modelLoadDispatcher) { loadModel() }?.also {
+                recognizer = it
+            }
+        }
+    }
+
+    /**
+     * Discard captured audio up to [untilMs] (wall-clock).
+     *
+     * Call this before starting to listen when a confirmation beep will play, so the beep
+     * itself is not treated as the beginning of the user's speech.
+     */
+    override fun discardAudioUntil(untilMs: Long) {
+        discardAudioBeforeMs = untilMs
+    }
+
+    /**
+     * Ensure the recognizer is loaded and ready.
+     *
+     * Used to warm the model up *before* prompting the user to speak, so that no model
+     * load sits in the critical path between the prompt and the start of capture.
+     */
+    override suspend fun warmUp(): Boolean {
+        if (modelDir.isNullOrBlank()) {
+            Log.w(TAG, "warmUp called before initialize - no model path known")
+            return false
+        }
+        val loaded = awaitRecognizer() != null
+        if (loaded) {
+            scheduleIdleRelease()
+        } else {
+            Log.w(TAG, "warmUp failed to load the model")
+        }
+        return loaded
+    }
+
     private fun loadModel(): OfflineRecognizer? {
         val dir = modelDir ?: return null
         return try {
@@ -136,7 +355,7 @@ class SherpaOnnxSttEngine @Inject constructor(
                         task = "transcribe",
                     ),
                     tokens = "$dir/tokens.txt",
-                    numThreads = 2,
+                    numThreads = 4,
                     debug = false,
                     provider = "cpu",
                     modelType = "whisper",
@@ -152,8 +371,11 @@ class SherpaOnnxSttEngine @Inject constructor(
     }
 
     override suspend fun startListening() {
-        if (_state.value != SttState.READY) {
-            Log.w(TAG, "Cannot start listening - state is ${_state.value}")
+        // Start capturing audio immediately - the model may still be loading in parallel.
+        // Making the microphone wait for a ~2 s model load meant losing the start of the
+        // user's sentence (and left the input stream in a dead state on some devices).
+        if (_state.value == SttState.ERROR) {
+            Log.w(TAG, "Cannot start listening - engine in ERROR state")
             return
         }
 
@@ -172,8 +394,10 @@ class SherpaOnnxSttEngine @Inject constructor(
         currentSettings = connectionRepository.getSttSettings()
         Log.d(TAG, "STT settings: silence=${currentSettings.silenceDurationMs}ms, threshold=${currentSettings.silenceThreshold}, max=${currentSettings.maxRecordingSeconds}s")
 
+        idleJob?.cancel()
         _state.value = SttState.LISTENING
         audioBuffer.clear()
+        hasDetectedSpeechThisRecording = false
 
         // Start recording on IO dispatcher
         recordingJob = scope.launch {
@@ -218,6 +442,9 @@ class SherpaOnnxSttEngine @Inject constructor(
         val maxSamples = SAMPLE_RATE * currentSettings.maxRecordingSeconds
         var silenceStart = 0L
         var hasDetectedSpeech = false
+        var peakAmplitude = 0
+        var levelLogCounter = 0
+        var captureWindowOpened = false
 
         try {
             while (currentCoroutineContext().isActive && _state.value == SttState.LISTENING) {
@@ -231,13 +458,38 @@ class SherpaOnnxSttEngine @Inject constructor(
                 val floatSamples = FloatArray(shortsRead) { i ->
                     shortBuffer[i] / 32768.0f
                 }
+
+                // Drop the wake-word confirmation beep, which plays through the speaker
+                // just as the microphone opens. Recording it made the first word of the
+                // user's command get clipped or mis-aligned.
+                if (System.currentTimeMillis() < discardAudioBeforeMs) {
+                    continue
+                }
+                if (!captureWindowOpened) {
+                    captureWindowOpened = true
+                    Log.i(TAG, "Capture window open (beep discarded)")
+                }
                 audioBuffer.add(floatSamples)
                 totalSamples += shortsRead
 
                 // Check audio level for silence detection
                 val maxAmplitude = shortBuffer.take(shortsRead).maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+
+                // Diagnostic: report the peak level periodically so we can tell whether
+                // the microphone is actually delivering audio (vs a silent/contended
+                // input stream) without needing to dump raw PCM.
+                peakAmplitude = maxOf(peakAmplitude, maxAmplitude)
+                if (++levelLogCounter % 25 == 0) {
+                    Log.d(
+                        TAG,
+                        "Mic level: peak=$peakAmplitude (threshold=${currentSettings.silenceThreshold}), " +
+                            "speechDetected=$hasDetectedSpeech, samples=${totalSamples / SAMPLE_RATE}s",
+                    )
+                }
+
                 if (maxAmplitude > currentSettings.silenceThreshold) {
                     hasDetectedSpeech = true
+                    hasDetectedSpeechThisRecording = true
                     silenceStart = 0L
                     // Emit a "recording" indicator as partial result
                     val seconds = totalSamples / SAMPLE_RATE
@@ -282,8 +534,9 @@ class SherpaOnnxSttEngine @Inject constructor(
 
         withContext(Dispatchers.IO) {
             try {
-                // Load model on demand
-                val rec = recognizer ?: loadModel()
+                // Load the model on demand, waiting for any in-flight load to finish. When
+                // capture starts before the model is ready, this is what bridges the gap.
+                val rec = awaitRecognizer()
                 if (rec == null) {
                     _state.value = SttState.ERROR
                     _results.tryEmit(
@@ -292,7 +545,6 @@ class SherpaOnnxSttEngine @Inject constructor(
                     return@withContext
                 }
                 recognizer = rec
-
                 // Combine all audio chunks into one array
                 val totalSize = audioBuffer.sumOf { it.size }
                 val allSamples = FloatArray(totalSize)
@@ -310,24 +562,33 @@ class SherpaOnnxSttEngine @Inject constructor(
                 stream.acceptWaveform(allSamples, SAMPLE_RATE)
                 rec.decode(stream)
                 val result = rec.getResult(stream)
-                val text = result.text.trim()
+                val text = collapseRepetitions(result.text.trim())
 
                 Log.d(TAG, "Whisper result: '$text'")
 
+                val now = System.currentTimeMillis()
                 if (text.isNotEmpty()) {
-                    _results.tryEmit(SttResult(text = text, isFinal = true, confidence = 1.0f))
+                    _results.tryEmit(
+                        SttResult(text = text, isFinal = true, confidence = 1.0f, timestampMs = now),
+                    )
                 } else {
-                    _results.tryEmit(SttResult(text = "No speech detected", isFinal = true, confidence = 0f))
+                    _results.tryEmit(
+                        SttResult(
+                            text = "No speech detected",
+                            isFinal = true,
+                            confidence = 0f,
+                            timestampMs = now,
+                        ),
+                    )
                 }
 
-                // Release model from memory to prevent OOM when app is backgrounded
-                recognizer = null
-                Log.d(TAG, "Whisper model released from memory")
+                // Keep model resident temporarily, then schedule release if idle
+                Log.d(TAG, "Whisper model kept resident in memory")
 
                 _state.value = SttState.READY
+                scheduleIdleRelease()
             } catch (e: Exception) {
                 Log.e(TAG, "Whisper processing failed", e)
-                recognizer = null
                 _state.value = SttState.ERROR
                 _results.tryEmit(
                     SttResult(text = "Recognition failed: ${e.message}", isFinal = true, confidence = 0f),
@@ -344,11 +605,22 @@ class SherpaOnnxSttEngine @Inject constructor(
         recordingJob?.cancelAndJoin()
         recordingJob = null
 
-        // Process whatever audio we captured
-        if (audioBuffer.isNotEmpty()) {
+        // Process whatever audio we captured - but only if it actually contains speech.
+        // Transcribing a near-silent buffer makes Whisper hallucinate repetition loops.
+        if (audioBuffer.isNotEmpty() && hasDetectedSpeechThisRecording) {
             processBufferedAudio()
         } else {
+            Log.d(TAG, "stopListening: no speech detected, skipping transcription")
+            audioBuffer.clear()
             _state.value = SttState.READY
+            _results.tryEmit(
+                SttResult(
+                    text = "No speech detected",
+                    isFinal = true,
+                    confidence = 0f,
+                    timestampMs = System.currentTimeMillis(),
+                ),
+            )
         }
     }
 
@@ -359,8 +631,11 @@ class SherpaOnnxSttEngine @Inject constructor(
     override suspend fun release() {
         recordingJob?.cancelAndJoin()
         recordingJob = null
+        idleJob?.cancel()
+        idleJob = null
         recognizer = null
         audioBuffer.clear()
+        discardAudioBeforeMs = 0L
         _state.value = SttState.UNINITIALIZED
     }
 

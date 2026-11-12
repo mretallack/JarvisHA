@@ -2,6 +2,7 @@ package uk.org.retallack.jarvis.ui.settings
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,14 +14,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Nightlight
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
@@ -149,6 +153,44 @@ fun SettingsScreen(
         // Wake word
         SettingsSection("Wake Word")
         ListItem(
+            headlineContent = { Text("Battery Optimization") },
+            supportingContent = {
+                Text(
+                    if (state.isIgnoringBatteryOptimizations) {
+                        "Unrestricted (Reliable background listening)"
+                    } else {
+                        "Optimized (May be stopped in background)"
+                    },
+                )
+            },
+            leadingContent = {
+                Icon(Icons.Filled.Lock, contentDescription = "Battery optimization")
+            },
+            trailingContent = {
+                if (!state.isIgnoringBatteryOptimizations) {
+                    Button(onClick = {
+                        try {
+                            val intent = android.content.Intent(
+                                android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                android.net.Uri.parse("package:${context.packageName}"),
+                            )
+                            context.startActivity(intent)
+                        } catch (_: Exception) {
+                            try {
+                                val intent = android.content.Intent(
+                                    android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS,
+                                )
+                                context.startActivity(intent)
+                            } catch (_: Exception) {}
+                        }
+                    }) {
+                        Text("Disable")
+                    }
+                }
+            },
+        )
+
+        ListItem(
             headlineContent = { Text("Hey Jarvis") },
             supportingContent = {
                 Text(
@@ -187,6 +229,42 @@ fun SettingsScreen(
                         }
                     },
                 )
+            },
+        )
+        HorizontalDivider()
+        ListItem(
+            headlineContent = { Text("Wake word sensitivity") },
+            supportingContent = {
+                Column {
+                    Text(
+                        "Detection threshold ${"%.2f".format(0.95f - (state.wakeWordSensitivity * 0.45f))}",
+                    )
+                    Text(
+                        "Move left if \"Hey Jarvis\" triggers on its own. " +
+                            "Move right if it doesn't always respond.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("Fewer false triggers", style = MaterialTheme.typography.labelSmall)
+                        Text("More responsive", style = MaterialTheme.typography.labelSmall)
+                    }
+                    Slider(
+                        value = state.wakeWordSensitivity,
+                        onValueChange = { viewModel.setWakeWordSensitivity(it) },
+                        valueRange = 0f..1f,
+                        enabled = state.wakeWordEnabled,
+                    )
+                    Text(
+                        "Saving restarts the listener.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            },
+            leadingContent = {
+                Icon(Icons.Filled.Tune, contentDescription = "Wake word sensitivity")
             },
         )
         HorizontalDivider()

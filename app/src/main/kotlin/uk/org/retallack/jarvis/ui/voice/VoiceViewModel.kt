@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -40,8 +41,7 @@ data class ChatMessage(
 )
 
 @HiltViewModel
-class VoiceViewModel @Inject constructor(
-    private val conversationRepository: ConversationRepository,
+class VoiceViewModel @Inject constructor(    private val conversationRepository: ConversationRepository,
     private val sttEngine: SttEngine,
     private val ttsEngine: TtsEngine,
     private val messageDao: ConversationMessageDao,
@@ -60,22 +60,34 @@ class VoiceViewModel @Inject constructor(
     // Track entity info for response messages (msgId -> (entityIds, entityNames))
     private val responseEntityInfo = mutableMapOf<Long, Pair<List<String>, List<String>>>()
 
-    val messages: StateFlow<List<ChatMessage>> = messageDao.getRecentMessages(50)
-        .map { messages ->
-            messages.map { msg ->
-                val entityInfo = responseEntityInfo[msg.id]
-                ChatMessage(
-                    id = msg.id,
-                    text = msg.text,
-                    isUser = msg.isUser,
-                    timestamp = msg.timestamp,
-                    isError = msg.isError,
-                    entityIds = entityInfo?.first ?: emptyList(),
-                    entityNames = entityInfo?.second ?: emptyList(),
-                )
-            }.reversed() // Show oldest first
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    // Bumped when the `:wakeword` process reports it wrote a new chat message. Room's
+    // invalidation is per-process, so a write from another process would otherwise be
+    // invisible here until the screen is recreated.
+    private val crossProcessRefresh = MutableStateFlow(0)
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val messages: StateFlow<List<ChatMessage>> =
+        crossProcessRefresh
+            .flatMapLatest { messageDao.getRecentMessages(50) }            .map { messages ->
+                messages.map { msg ->
+                    val entityInfo = responseEntityInfo[msg.id]
+                    ChatMessage(
+                        id = msg.id,
+                        text = msg.text,
+                        isUser = msg.isUser,
+                        timestamp = msg.timestamp,
+                        isError = msg.isError,
+                        entityIds = entityInfo?.first ?: emptyList(),
+                        entityNames = entityInfo?.second ?: emptyList(),
+                    )
+                }.reversed() // Show oldest first
+            }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** Re-read the conversation history after a write from another process. */
+    fun onConversationChanged() {
+        crossProcessRefresh.value++
+    }
 
     private var wakeWordTriggered = false
 
