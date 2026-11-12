@@ -179,7 +179,9 @@ was **no boot receiver**.
   kill. Verified on device: `stopIfKilled=false`.
 - `onTaskRemoved()` — swipe-away keeps the listener running.
 - `BootReceiver` + `RECEIVE_BOOT_COMPLETED` for `BOOT_COMPLETED`, `MY_PACKAGE_REPLACED`,
-  `QUICKBOOT_POWERON`. Verified registered in `dumpsys package`.
+  `QUICKBOOT_POWERON`. Verified registered in `dumpsys package`. **Note: see §10 — on
+  Android 14+ this receiver cannot start the microphone service, so it now posts a
+  "tap to resume" notification instead.**
 
 **Result:** ✅ Verified on device.
 
@@ -212,6 +214,53 @@ positives. Slider **left** = fewer false triggers; **right** = more responsive.
 | 0% | 0.95 | fewest |
 | 50% (default) | 0.725 | — |
 | 100% | 0.50 | most |
+
+---
+
+### 10. Wake word deaf after Android 17 upgrade (microphone FGS from BOOT_COMPLETED) ⚠️
+
+**Evidence:** after the phone was upgraded to Android 17, the wake-word listener started
+at boot but captured nothing. Logcat showed the service starting and then being denied the
+microphone:
+
+```
+I ActivityManager: Background started FGS: Allowed [... code:SYSTEM_ALLOW_LISTED ...]
+I ActivityManager: Start proc ...:wakeword for started-service ...WakeWordService
+W ActivityManager: Foreground service started from background can not have
+    location/camera/microphone access: service ...WakeWordService
+```
+
+`dumpsys activity services` was empty and `ProcStatsManager` reported *"No process
+…:wakeword for service WakeWordService"* — the listener never came back.
+
+**Cause:** a platform restriction, not a bug in the app.
+
+- Android 11+: a microphone/camera/location foreground service started **while the app is
+  in the background** is denied that resource. The service runs but is deaf.
+- Android 14+ (targetSdk ≥ 34): the system **forbids launching a `microphone` foreground
+  service from a `BOOT_COMPLETED` receiver** outright.
+
+The app targets SDK 34, so the `BootReceiver` → `WakeWordService` path could never have
+the microphone on modern Android. (The earlier "✅ Verified" note in §8 only verified the
+receiver was *registered*, not that it could actually hear.)
+
+**Fix — start the listener only from a foreground context:**
+
+| Where | Behaviour |
+|---|---|
+| `BootReceiver` | No longer starts the service. Posts a **"tap to resume"** notification (`WakeWordNotifications`). |
+| `MainActivity.onStart()` | Arms the listener from a visible activity — the only context where the mic is granted. Also clears the prompt. |
+| `JarvisApplication` | No longer auto-starts the service (it ran before any activity was visible, so it could only produce a deaf listener). |
+| `WakeWordService` | Detects microphone denial (`AudioRecord` throws / `recordingState != RECORDING`) and, instead of dying silently, posts the resume prompt and stops. |
+
+**Accepted trade-off:** after a reboot (or app update) the user must tap the notification
+once to re-arm the listener. This is the platform-mandated behaviour for a wake-word
+service on Android 14+; there is no way to arm the microphone from the background. A
+foreground start (app launch, widget tap, notification tap) is required.
+
+**Do not** try to "fix" this by starting the microphone service from `BOOT_COMPLETED` or
+from `Application.onCreate()` — it will start but be deaf, which is worse than an honest
+prompt.
 
 ---
 
@@ -267,6 +316,8 @@ adb shell dumpsys package  uk.org.retallack.jarvis | grep -A3 BootReceiver
 | `Idle timeout reached, releasing` | model released, next command is cold |
 | `Restarted by system after being killed` | sticky restart worked |
 | `Collapsing Whisper repetition loop` | repetition guard fired |
+| `Microphone unavailable - posting resume prompt and stopping` | mic denied (background-started FGS); user must tap the prompt |
+| `Audio capture started (16kHz, mono, 16-bit)` | microphone genuinely live |
 
 ---
 
@@ -280,3 +331,7 @@ adb shell dumpsys package  uk.org.retallack.jarvis | grep -A3 BootReceiver
   `-b all -G 4M`. The default buffer is far too small.
 - **Reinstalling the APK kills both processes** and does not restart the listener until
   the app is launched. Expect "wake word dead" right after an install.
+- **Never start the microphone foreground service from a background context**
+  (`BOOT_COMPLETED`, `Application.onCreate()`, a bare sticky restart). Android will let
+  the service start but deny it the microphone, producing a deaf listener. Arm it only
+  from a foreground context (visible activity, widget, or notification tap). See §10.

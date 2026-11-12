@@ -193,6 +193,10 @@ class WakeWordService : Service() {
             }
         } catch (t: Throwable) {
             Log.e(TAG, "Failed to start foreground service due to background restriction", t)
+            // The service started but the microphone was refused (Android 14+ refuses a
+            // microphone FGS created in the background). Prompt the user to bring the app
+            // forward, which re-arms the listener with the microphone granted.
+            WakeWordNotifications.postResumeNotification(this)
             running = false
             stopSelf()
             return START_NOT_STICKY
@@ -280,6 +284,29 @@ class WakeWordService : Service() {
     }
 
     /**
+     * The microphone could not be acquired.
+     *
+     * This happens when this microphone-type foreground service was started while the app
+     * was in the background - most commonly the system restarting us (START_STICKY) after
+     * an LMK kill, or a boot/update. Android denies microphone access in that case:
+     *
+     * ```
+     * W ActivityManager: Foreground service started from background can not have
+     *   location/camera/microphone access: service ...WakeWordService
+     * ```
+     *
+     * Rather than sit there silently deaf, stop and post a notification asking the user
+     * to tap it, which opens the app and re-arms the listener from the foreground where
+     * the microphone is actually granted.
+     */
+    private fun onMicrophoneUnavailable() {
+        Log.w(TAG, "Microphone unavailable - posting resume prompt and stopping")
+        WakeWordNotifications.postResumeNotification(this)
+        running = false
+        stopSelf()
+    }
+
+    /**
      * Suspend the wake-word listener and release the microphone.
      *
      * The wake-word detector and the STT engine both open an AudioRecord on the same
@@ -315,24 +342,58 @@ class WakeWordService : Service() {
         }
 
         val bufferSize = maxOf(minBufferSize * 2, FRAME_SIZE * 2 * 2) // At least 2 frames
-        val record = AudioRecord(
-            MediaRecorder.AudioSource.VOICE_RECOGNITION,
-            SAMPLE_RATE,
-            CHANNEL_CONFIG,
-            AUDIO_FORMAT,
-            bufferSize,
-        )
+
+        // Constructing/starting an AudioRecord throws if the microphone is denied. That
+        // happens when a microphone foreground service is created while the app is in the
+        // background (e.g. the system restarting us after an LMK kill) - Android refuses
+        // to hand over the microphone. Treat it as "unavailable" rather than crashing.
+        val record = try {
+            AudioRecord(
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                SAMPLE_RATE,
+                CHANNEL_CONFIG,
+                AUDIO_FORMAT,
+                bufferSize,
+            )
+        } catch (t: Throwable) {
+            Log.e(TAG, "Could not create AudioRecord - microphone unavailable", t)
+            onMicrophoneUnavailable()
+            return
+        }
 
         if (record.state != AudioRecord.STATE_INITIALIZED) {
             Log.e(TAG, "AudioRecord failed to initialize")
             record.release()
-            stopSelf()
+            onMicrophoneUnavailable()
+            return
+        }
+
+        try {
+            record.startRecording()
+        } catch (t: Throwable) {
+            Log.e(TAG, "startRecording() failed - microphone unavailable", t)
+            record.release()
+            onMicrophoneUnavailable()
+            return
+        }
+
+        // startRecording() can also succeed silently while the mic is denied; the
+        // recording state is the honest signal.
+        if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+            Log.e(
+                TAG,
+                "AudioRecord is not recording (state=${record.recordingState}) - microphone denied",
+            )
+            record.release()
+            onMicrophoneUnavailable()
             return
         }
 
         audioRecord = record
-        record.startRecording()
         Log.i(TAG, "Audio capture started (16kHz, mono, 16-bit)")
+
+        // The microphone is genuinely live now, so any "tap to resume" prompt is stale.
+        WakeWordNotifications.cancelResumeNotification(this)
 
         val buffer = ShortArray(FRAME_SIZE)
 

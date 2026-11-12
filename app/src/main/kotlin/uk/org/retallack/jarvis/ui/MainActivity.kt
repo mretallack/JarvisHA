@@ -33,6 +33,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import dagger.hilt.android.AndroidEntryPoint
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import javax.inject.Inject
 import uk.org.retallack.jarvis.ui.entities.EntitiesScreen
 import uk.org.retallack.jarvis.ui.entities.EntityDetailScreen
 import uk.org.retallack.jarvis.ui.navigation.Routes
@@ -40,12 +43,17 @@ import uk.org.retallack.jarvis.ui.settings.SettingsScreen
 import uk.org.retallack.jarvis.ui.setup.SetupWizardNavHost
 import uk.org.retallack.jarvis.ui.theme.JarvisTheme
 import uk.org.retallack.jarvis.ui.voice.VoiceScreen
+import uk.org.retallack.jarvis.voice.wakeword.WakeWordNotifications
+import uk.org.retallack.jarvis.voice.wakeword.WakeWordPreferences
 import uk.org.retallack.jarvis.voice.wakeword.WakeWordService
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
+
+    @Inject
+    lateinit var wakeWordPreferences: WakeWordPreferences
 
     companion object {
         private const val TAG = "MainActivity"
@@ -71,6 +79,24 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         // Returning to foreground: re-warm the STT model if it was released.
         viewModel.onAppForegroundStateChanged(true)
+
+        // Arm the wake-word listener from a foreground (visible-activity) context.
+        //
+        // Android 14+ denies microphone access to a microphone foreground service that
+        // is started while the app is in the background, so this is the only reliable
+        // place to (re)start it - including after a reboot, where the boot receiver can
+        // only post a "tap to resume" prompt. Starting it here is idempotent: if the
+        // listener is already running, onStartCommand simply re-delivers and returns.
+        lifecycleScope.launch {
+            try {
+                if (wakeWordPreferences.getEnabled()) {
+                    WakeWordService.start(this@MainActivity)
+                    WakeWordNotifications.cancelResumeNotification(this@MainActivity)
+                }
+            } catch (_: Exception) {
+                // Don't crash the UI if DataStore isn't available yet.
+            }
+        }
     }
 
     override fun onStop() {

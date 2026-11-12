@@ -14,10 +14,22 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 /**
- * Restarts the wake-word listener after a reboot.
+ * Re-arms the wake-word listener after a reboot or app update.
  *
- * The app is expected to keep listening for "Hey Jarvis" across restarts, but without this
- * receiver the service only came back when the user happened to open the app.
+ * **We deliberately do not start [WakeWordService] here.** On Android 14+ a
+ * `microphone`-type foreground service cannot be launched from a `BOOT_COMPLETED`
+ * receiver, and any microphone service started while the app is in the background is
+ * denied microphone access. Starting the service here produced a listener that ran but
+ * could not hear anything:
+ *
+ * ```
+ * W ActivityManager: Foreground service started from background can not have
+ *   location/camera/microphone access: service ...WakeWordService
+ * ```
+ *
+ * Instead we post a "tap to resume" notification. Tapping it opens the app, which arms
+ * the listener from a visible-activity context — the only context in which the
+ * microphone is actually granted. See [WakeWordNotifications].
  */
 class BootReceiver : BroadcastReceiver() {
 
@@ -36,7 +48,7 @@ class BootReceiver : BroadcastReceiver() {
             return
         }
 
-        Log.i(TAG, "Boot/package-replaced received ($action); restoring wake word listener")
+        Log.i(TAG, "Boot/package-replaced received ($action); prompting user to resume listener")
 
         // Broadcast receivers must not block, so hand off to a one-shot scope.
         val pendingResult = goAsync()
@@ -46,12 +58,14 @@ class BootReceiver : BroadcastReceiver() {
                     .fromApplication(context.applicationContext, PrefsEntryPoint::class.java)
                     .wakeWordPreferences()
                 if (prefs.getEnabled()) {
-                    WakeWordService.start(context.applicationContext)
+                    // Cannot start the microphone service from here (see class doc).
+                    // Ask the user to bring the app forward instead.
+                    WakeWordNotifications.postResumeNotification(context.applicationContext)
                 } else {
-                    Log.i(TAG, "Wake word disabled in settings; not starting")
+                    Log.i(TAG, "Wake word disabled in settings; not prompting")
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Could not restore wake word listener after boot", e)
+                Log.w(TAG, "Could not post wake word resume prompt after boot", e)
             } finally {
                 pendingResult.finish()
             }
