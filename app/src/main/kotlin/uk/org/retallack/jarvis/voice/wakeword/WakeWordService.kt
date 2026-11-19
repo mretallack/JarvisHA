@@ -102,7 +102,7 @@ class WakeWordService : Service() {
         private const val SAMPLE_RATE = 16000
         private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
-        private const val FRAME_SIZE = 1152 // 72ms at 16kHz (matches OpenWakeWord mel input)
+        private const val FRAME_SIZE = 160 // 10ms at 16kHz (microWakeWord streaming step)
         private const val DETECTION_BACKOFF_MS = 15000L
 
         /** Length of the "speak now" prompt tone. */

@@ -3,40 +3,43 @@ package uk.org.retallack.jarvis.voice.wakeword
 import android.content.Context
 
 /**
- * Provides paths to bundled wake word TFLite models in APK assets.
- * Models are stored under assets/models/ and accessed via AssetManager.
+ * Provides paths to bundled microWakeWord assets in the APK.
+ *
+ * microWakeWord ships a single streaming TFLite model plus a JSON manifest (the same
+ * format ESPHome / Home Assistant use). The manifest carries the detection parameters
+ * (`probability_cutoff`, `feature_step_size`, `sliding_window_size`).
+ *
+ * The previous OpenWakeWord setup needed three models (melspectrogram, embedding,
+ * wake word) because its feature extraction was itself a pair of TFLite models.
+ * microWakeWord does feature extraction in native code, so only the classifier is
+ * bundled. See docs/microwakeword-migration-plan.md.
  */
 object ModelPaths {
 
-    private const val MODELS_DIR = "models"
+    /** Assets directory holding the microWakeWord model and manifest. */
+    const val WAKEWORD_ASSET_DIR = "wakeword"
 
-    /** The main wake word detection model. */
-    const val WAKE_WORD_MODEL = "$MODELS_DIR/hey_jarvis.tflite"
+    /** The microWakeWord streaming classifier model. */
+    const val WAKE_WORD_MODEL = "$WAKEWORD_ASSET_DIR/hey_jarvis.tflite"
 
-    /** Mel spectrogram feature extraction model. */
-    const val MELSPECTROGRAM_MODEL = "$MODELS_DIR/melspectrogram.tflite"
+    /** The model's manifest (detection configuration). */
+    const val WAKE_WORD_MANIFEST = "$WAKEWORD_ASSET_DIR/hey_jarvis.json"
 
-    /** Audio embedding model for feature extraction. */
-    const val EMBEDDING_MODEL = "$MODELS_DIR/embedding_model.tflite"
+    /** Model files (`.tflite`) required for wake word detection. */
+    fun allModels(): List<String> = listOf(WAKE_WORD_MODEL)
 
-    /**
-     * Returns all model file paths required for wake word detection.
-     */
-    fun allModels(): List<String> = listOf(
-        WAKE_WORD_MODEL,
-        MELSPECTROGRAM_MODEL,
-        EMBEDDING_MODEL,
-    )
+    /** All bundled wake-word assets, model and manifest. */
+    fun allAssets(): List<String> = listOf(WAKE_WORD_MODEL, WAKE_WORD_MANIFEST)
 
     /**
-     * Verifies that all required model files exist in assets.
+     * Verifies that all required wake-word assets exist in the APK.
      * @param context Application context for asset access
-     * @return true if all models are accessible in assets
+     * @return true if all assets are accessible
      */
     fun verifyModelsExist(context: Context): Boolean {
         return try {
-            allModels().all { modelPath ->
-                context.assets.open(modelPath).use { it.available() > 0 }
+            allAssets().all { path ->
+                context.assets.open(path).use { it.available() > 0 }
             }
         } catch (e: Exception) {
             false
@@ -44,12 +47,11 @@ object ModelPaths {
     }
 
     /**
-     * Loads a model file from assets into a ByteArray.
+     * Loads an asset file into a ByteArray.
      * @param context Application context
-     * @param modelPath Relative path within assets (e.g. "models/hey_jarvis.tflite")
-     * @return ByteArray containing the model data
+     * @param path Relative path within assets (e.g. "wakeword/hey_jarvis.tflite")
      */
-    fun loadModelFromAssets(context: Context, modelPath: String): ByteArray {
-        return context.assets.open(modelPath).use { it.readBytes() }
+    fun loadModelFromAssets(context: Context, path: String): ByteArray {
+        return context.assets.open(path).use { it.readBytes() }
     }
 }

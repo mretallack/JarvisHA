@@ -262,14 +262,67 @@ foreground start (app launch, widget tap, notification tap) is required.
 from `Application.onCreate()` — it will start but be deaf, which is worse than an honest
 prompt.
 
+### 11. Swapped the wake-word engine: OpenWakeWord → microWakeWord
+
+**Motivation:** outstanding issue #1 — the OpenWakeWord (OWW) `hey_jarvis` v0.1 models are
+from 2023 and produced confident false positives (0.97/0.98) the sensitivity slider could
+not suppress. microWakeWord's models are actively maintained by ESPHome / Home Assistant
+Voice, ship a VAD model, and are ~50 KB INT8 instead of ~2.7 MB of float models. See
+`docs/microwakeword-migration-plan.md` for the full plan.
+
+**What changed:**
+
+| | Before | After |
+|---|---|---|
+| Engine | `LiteRtWakeWordEngine` (Kotlin + `org.tensorflow:tensorflow-lite`) | `MicroWakeWordEngine` (JNI → `:microwakeword` NDK module) |
+| Preprocessing | 2 TFLite models (melspectrogram, embedding) | TFLite-Micro **audio frontend** (C, `kissfft`), 40 features / 10 ms step |
+| Assets | `assets/models/{melspectrogram,embedding_model,hey_jarvis}.tflite` | `assets/wakeword/hey_jarvis.tflite` (v2) + `hey_jarvis.json` |
+| Audio chunk | `FRAME_SIZE` 1152 (72 ms) | `FRAME_SIZE` **160 (10 ms)** |
+| Cutoff | `detectionThreshold(s)=0.95-(s*0.45)` | `detectionCutoff(s, manifestCutoff)` |
+
+The classifier and the audio frontend run in a **native library** (`libmicrowakeword.so`)
+built from a new Gradle module `:microwakeword`, closely ported from Home Assistant's
+Android app (Apache-2.0, module `microwakeword/`) with `tflite-micro` + `kissfft` pulled
+in via CMake `FetchContent` (pinned URL + SHA256). This is the project's **first native
+code**. Only `arm64-v8a` is built; the library is 16 KB-page aligned for Android 15+.
+
+**Sensitivity mapping** (single-sourced in `MicroWakeWordEngine.detectionCutoff`):
+
+```
+detectionCutoff(s, manifestCutoff) = (manifestCutoff + (0.5 - s) * 0.2).coerceIn(0.5, 0.99)
+```
+
+Semantics are preserved: **lower sensitivity = higher cutoff = fewer false positives**.
+Default (0.5) uses the model's validated `probability_cutoff` (0.97 for hey_jarvis v2);
+the slider nudges ±0.1 around it.
+
+**Warm-up:** the microWakeWord frontend needs 1–2 s of background audio to prime its noise
+estimate — without it a wake word immediately after start is missed. `startListening()`
+feeds ~4 s (400 × 160 samples) of synthetic low-level Gaussian noise (stddev 25, seed 42),
+matching Home Assistant's approach.
+
+**Manifest:** the model ships a JSON manifest (`probability_cutoff`, `feature_step_size`,
+`sliding_window_size`) parsed by `MicroWakeWordModelConfig` (kotlinx.serialization). For
+hey_jarvis v2: `0.97 / 10 / 5`. The cutoff is a **constructor argument** of the native
+engine, so changing sensitivity recreates it on the next `startListening()`.
+
+**Verification (on the Moto G52):** native lib loads; engine initialises
+`stride=3, inputScale=0.101961, inputZeroPoint=-128, arena=65536 bytes`; 4 instrumented
+tests pass (assets load, 30 s of silence does **not** trigger detection, reset/close are
+safe); `long` idle produces no false detections. Positive detection (a real "Hey Jarvis")
+is confirmed by voice only.
+
+**New log markers:** `Loaded model 'Hey Jarvis' v2 (cutoff=…, step=…, window=…)`,
+`Engine initialized: stride=…, inputScale=…`, `microWakeWord listening (cutoff=…, window=…)`.
+
 ---
 
 ## Known outstanding issues
 
-1. **False positives.** Observed scores of **0.97/0.98** against a 0.5–0.79 threshold.
-   These are genuinely confident detections, so the sensitivity slider **cannot** fix
-   them — even at 0% (threshold 0.95) they pass. Next step would be requiring **N
-   consecutive frames** above threshold rather than a single frame.
+1. ~~**False positives.**~~ **Addressed by the microWakeWord swap (§11).** The OWW v0.1
+   models scored 0.97/0.98 against a 0.5–0.79 threshold — genuinely confident detections
+   the slider could not suppress. The actively-maintained microWakeWord v2 model replaces
+   them; the cutoff is now derived from the model's own manifest.
 2. **App never comes to the foreground on wake.** `ACTION_WAKE_WORD` is declared and
    handled in `MainActivity` but **nothing ever sends it**.
 3. **Diagnostic logging still present.** `Mic level: peak=...` every ~5 s in
@@ -291,7 +344,7 @@ Pull the app's own logs with a large-enough buffer:
 adb logcat -b all -G 4M          # default 256 KiB gets overwritten constantly
 adb logcat -b all -c             # clear before a test
 # ...reproduce...
-adb logcat -d -v threadtime | grep -E "SherpaSTT|WakeWordService|LiteRt"
+adb logcat -d -v threadtime | grep -E "SherpaSTT|WakeWordService|MicroWakeWord"
 ```
 
 Forensics when logs have rotated:
@@ -318,6 +371,10 @@ adb shell dumpsys package  uk.org.retallack.jarvis | grep -A3 BootReceiver
 | `Collapsing Whisper repetition loop` | repetition guard fired |
 | `Microphone unavailable - posting resume prompt and stopping` | mic denied (background-started FGS); user must tap the prompt |
 | `Audio capture started (16kHz, mono, 16-bit)` | microphone genuinely live |
+| `Loaded model 'Hey Jarvis' v2 (cutoff=…, step=…, window=…)` | microWakeWord manifest parsed |
+| `Engine initialized: stride=…, inputScale=…, arena=… bytes` | native engine created |
+| `microWakeWord listening (cutoff=…, window=…)` | detection armed at this cutoff |
+| `Wake word detected` | wake word fired |
 
 ---
 

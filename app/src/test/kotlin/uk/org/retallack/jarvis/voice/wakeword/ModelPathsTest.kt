@@ -7,33 +7,27 @@ import org.junit.jupiter.api.Test
 class ModelPathsTest {
 
     @Test
-    fun `allModels returns three model paths`() {
-        val models = ModelPaths.allModels()
-        assertEquals(3, models.size)
+    fun `allModels returns the single microWakeWord model`() {
+        assertEquals(1, ModelPaths.allModels().size)
     }
 
     @Test
-    fun `allModels contains wake word model`() {
-        val models = ModelPaths.allModels()
-        assertTrue(models.contains(ModelPaths.WAKE_WORD_MODEL))
+    fun `allModels contains the wake word model`() {
+        assertTrue(ModelPaths.allModels().contains(ModelPaths.WAKE_WORD_MODEL))
     }
 
     @Test
-    fun `allModels contains melspectrogram model`() {
-        val models = ModelPaths.allModels()
-        assertTrue(models.contains(ModelPaths.MELSPECTROGRAM_MODEL))
+    fun `allAssets contains model and manifest`() {
+        val assets = ModelPaths.allAssets()
+        assertTrue(assets.contains(ModelPaths.WAKE_WORD_MODEL))
+        assertTrue(assets.contains(ModelPaths.WAKE_WORD_MANIFEST))
+        assertEquals(2, assets.size)
     }
 
     @Test
-    fun `allModels contains embedding model`() {
-        val models = ModelPaths.allModels()
-        assertTrue(models.contains(ModelPaths.EMBEDDING_MODEL))
-    }
-
-    @Test
-    fun `model paths start with models directory`() {
-        ModelPaths.allModels().forEach { path ->
-            assertTrue(path.startsWith("models/"), "Path $path should start with models/")
+    fun `assets live in the wakeword directory`() {
+        ModelPaths.allAssets().forEach { path ->
+            assertTrue(path.startsWith("wakeword/"), "Path $path should start with wakeword/")
         }
     }
 
@@ -45,17 +39,18 @@ class ModelPathsTest {
     }
 
     @Test
-    fun `wake word model has correct path`() {
-        assertEquals("models/hey_jarvis.tflite", ModelPaths.WAKE_WORD_MODEL)
+    fun `wake word model has expected path`() {
+        assertEquals("wakeword/hey_jarvis.tflite", ModelPaths.WAKE_WORD_MODEL)
     }
 
     @Test
-    fun `melspectrogram model has correct path`() {
-        assertEquals("models/melspectrogram.tflite", ModelPaths.MELSPECTROGRAM_MODEL)
+    fun `wake word manifest has expected path`() {
+        assertEquals("wakeword/hey_jarvis.json", ModelPaths.WAKE_WORD_MANIFEST)
     }
 
     @Test
-    fun `embedding model has correct path`() {
-        assertEquals("models/embedding_model.tflite", ModelPaths.EMBEDDING_MODEL)
+    fun `wakeword asset dir matches model paths`() {
+        assertTrue(ModelPaths.WAKE_WORD_MODEL.startsWith("${ModelPaths.WAKEWORD_ASSET_DIR}/"))
+        assertTrue(ModelPaths.WAKE_WORD_MANIFEST.startsWith("${ModelPaths.WAKEWORD_ASSET_DIR}/"))
     }
 }

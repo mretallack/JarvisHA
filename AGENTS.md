@@ -18,13 +18,20 @@ OS — read it before touching model retention.
 
 Voice-first Android assistant for Home Assistant. Kotlin, Jetpack Compose, MVVM +
 Repository, Hilt, OkHttp, Room, Sherpa-ONNX (on-device Whisper STT), Android TTS,
-OpenWakeWord via LiteRT/TFLite.
+microWakeWord via TFLite-Micro (`:microwakeword` NDK module).
 
 ## Architecture points that matter
 
 - **`WakeWordService` runs in a dedicated `:wakeword` process** (see `AndroidManifest.xml`).
   This is deliberate: it keeps the lightweight TFLite listener out of the same process as
   the heavy ONNX STT heap, so an LMK kill of one doesn't take down the other.
+- **Wake-word detection runs in native code.** The `:microwakeword` module (CMake +
+  `tflite-micro` + `kissfft`, ported from Home Assistant's Apache-2.0 `microwakeword`
+  module) builds `libmicrowakeword.so`. `MicroWakeWordEngine` is the Kotlin JNI wrapper;
+  the audio frontend needs a **warm-up** (synthetic noise) before it can detect, so a wake
+  word immediately after service start is expected to be missed. Model + manifest live in
+  `assets/wakeword/`. CMake `FetchContent` downloads pinned tarballs on the first configure
+  (needs network).
 - **Room's invalidation is per-process.** Cross-process DB writes do not notify the other
   process's observers. Use `ConversationSync.notifyChanged()` for conversation updates.
 - **The `:wakeword` process is headless** — it has no activities. Do not infer "app is
@@ -33,9 +40,9 @@ OpenWakeWord via LiteRT/TFLite.
   starting capture, or the result is missed entirely. `SttResult.timestampMs` exists to
   discard stale replays.
 - **Wake-word sensitivity is counter-intuitive.** LOWER sensitivity = HIGHER detection
-  threshold = FEWER false positives. The threshold is single-sourced in
-  `LiteRtWakeWordEngine.detectionThreshold()` so the decision and the log cannot drift.
-  The setting is persisted by `WakeWordPreferences` and applied by `WakeWordService`.
+  threshold = FEWER false positives. The cutoff is single-sourced in
+  `MicroWakeWordEngine.detectionCutoff()` so the decision and the log cannot drift. The
+  setting is persisted by `WakeWordPreferences` and applied by `WakeWordService`.
 
 ## Testing device (Moto G52) is memory-constrained
 
@@ -56,7 +63,7 @@ model at 387 MB RSS **was killed in normal use**.
 adb logcat -b all -G 4M      # the default 256 KiB buffer is far too small
 adb logcat -b all -c         # clear before reproducing
 # ...reproduce...
-adb logcat -d -v threadtime | grep -E "SherpaSTT|WakeWordService|LiteRt"
+adb logcat -d -v threadtime | grep -E "SherpaSTT|WakeWordService|MicroWakeWord"
 ```
 
 See the log markers table in the investigation doc.
