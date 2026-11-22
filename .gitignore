@@ -27,3 +27,6 @@ venv/
 .env
 *.keystore
 *.jks
+
+# NDK/CMake scratch output
+.cxx/

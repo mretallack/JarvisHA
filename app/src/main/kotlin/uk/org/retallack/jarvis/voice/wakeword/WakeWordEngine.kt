@@ -76,7 +76,11 @@ interface WakeWordEngine {
 
     /**
      * Set detection sensitivity.
-     * @param sensitivity value 0.0 to 1.0 (higher = more sensitive, more false positives)
+     *
+     * NOTE the naming is counter-intuitive: LOWER sensitivity = HIGHER detection
+     * threshold = FEWER false positives. Raise it only if genuine wake words are missed.
+     *
+     * @param sensitivity value 0.0 to 1.0 (lower = stricter, fewer false positives)
      */
     fun setSensitivity(sensitivity: Float)
 

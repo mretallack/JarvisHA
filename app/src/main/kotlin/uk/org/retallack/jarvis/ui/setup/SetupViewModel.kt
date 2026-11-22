@@ -36,6 +36,7 @@ class SetupViewModel @Inject constructor(
     private val connectionRepository: ConnectionRepository,
     private val haClient: HaClient,
     private val modelManager: ModelManager,
+    private val wakeWordPreferences: uk.org.retallack.jarvis.voice.wakeword.WakeWordPreferences,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SetupUiState())
@@ -183,6 +184,10 @@ class SetupViewModel @Inject constructor(
                 _uiState.value.haUrl,
                 _uiState.value.haToken,
             )
+            // Persist the wake-word settings chosen in the wizard. Previously the
+            // sensitivity slider only updated in-memory UI state, so it was discarded.
+            wakeWordPreferences.setSensitivity(_uiState.value.sensitivity)
+            wakeWordPreferences.setEnabled(_uiState.value.wakeWordEnabled)
             _uiState.value = _uiState.value.copy(setupComplete = true)
         }
     }

@@ -140,8 +140,8 @@ dependencies {
     // Security
     implementation(libs.security.crypto)
 
-    // TensorFlow Lite (wake word)
-    implementation(libs.tensorflow.lite)
+    // microWakeWord (wake word, native TFLite-Micro engine)
+    implementation(project(":microwakeword"))
 
     // Sherpa-ONNX (on-device STT)
     implementation(files("libs/sherpa-onnx.aar"))
@@ -159,6 +159,9 @@ dependencies {
     testImplementation(libs.test.core)
     androidTestImplementation(platform(libs.compose.bom))
     androidTestImplementation(libs.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.test.core)
+    androidTestImplementation(libs.kotlinx.coroutines.test)
 }
 
 tasks.withType<Test> {

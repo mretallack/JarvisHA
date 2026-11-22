@@ -60,6 +60,27 @@ fun VoiceScreen(
     val messages by viewModel.messages.collectAsState()
     val mode by viewModel.mode.collectAsState()
 
+    // The wake-word service runs in a separate process, so its DB writes don't reach this
+    // process's Room observer. Listen for its "conversation changed" broadcast and refresh.
+    val syncContext = androidx.compose.ui.platform.LocalContext.current
+    androidx.compose.runtime.DisposableEffect(syncContext) {
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(ctx: android.content.Context?, intent: android.content.Intent?) {
+                viewModel.onConversationChanged()
+            }
+        }
+        val filter = android.content.IntentFilter(
+            uk.org.retallack.jarvis.data.db.ConversationSync.ACTION_CONVERSATION_CHANGED,
+        )
+        androidx.core.content.ContextCompat.registerReceiver(
+            syncContext,
+            receiver,
+            filter,
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        onDispose { syncContext.unregisterReceiver(receiver) }
+    }
+
     // Auto-start listening when launched by wake word
     LaunchedEffect(autoStartListening) {
         if (autoStartListening) {

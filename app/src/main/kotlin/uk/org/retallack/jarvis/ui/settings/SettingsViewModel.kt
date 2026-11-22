@@ -36,6 +36,7 @@ data class SettingsUiState(
     val ttsModelAvailable: Boolean = false,
     val wakeWordEnabled: Boolean = false,
     val wakeWordRunning: Boolean = false,
+    val wakeWordSensitivity: Float = 0.5f,
     val quietHoursEnabled: Boolean = false,
     val quietHoursStart: String = "22:00",
     val quietHoursEnd: String = "07:00",
@@ -46,6 +47,7 @@ data class SettingsUiState(
     val isLoadingAgents: Boolean = false,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val sttSettings: SttSettings = SttSettings(),
+    val isIgnoringBatteryOptimizations: Boolean = true,
 )
 
 @HiltViewModel
@@ -77,8 +79,12 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             val config = connectionRepository.getConnectionConfig()
             val wakeWordEnabled = wakeWordPreferences.getEnabled()
+            val wakeWordSensitivity = wakeWordPreferences.getSensitivity()
             val sttSettings = connectionRepository.getSttSettings()
             val quietHoursSettings = connectionRepository.getQuietHoursSettings()
+
+            val powerManager = appContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            val isIgnoring = powerManager.isIgnoringBatteryOptimizations(appContext.packageName)
 
             _uiState.value = _uiState.value.copy(
                 isConnected = haClient.isConfigured,
@@ -88,10 +94,12 @@ class SettingsViewModel @Inject constructor(
                 selectedAgentId = conversationRepository.getAgent(),
                 wakeWordEnabled = wakeWordEnabled,
                 wakeWordRunning = WakeWordService.isRunning(),
+                wakeWordSensitivity = wakeWordSensitivity,
                 quietHoursEnabled = quietHoursSettings.enabled,
                 quietHoursStart = quietHoursSettings.startTime,
                 quietHoursEnd = quietHoursSettings.endTime,
                 sttSettings = sttSettings,
+                isIgnoringBatteryOptimizations = isIgnoring,
             )
         }
     }
@@ -107,8 +115,23 @@ class SettingsViewModel @Inject constructor(
     /**
      * Toggle wake word detection on/off.
      */
-    fun toggleWakeWord(enabled: Boolean) {
+    /**
+     * Persist a new wake-word sensitivity and, if the service is running, restart it so
+     * the engine picks up the new threshold immediately.
+     */
+    fun setWakeWordSensitivity(value: Float) {
+        val clamped = value.coerceIn(0f, 1f)
+        _uiState.value = _uiState.value.copy(wakeWordSensitivity = clamped)
         viewModelScope.launch {
+            wakeWordPreferences.setSensitivity(clamped)
+            if (WakeWordService.isRunning()) {
+                WakeWordService.stop(appContext)
+                WakeWordService.start(appContext)
+            }
+        }
+    }
+
+    fun toggleWakeWord(enabled: Boolean) {        viewModelScope.launch {
             wakeWordPreferences.setEnabled(enabled)
 
             if (enabled) {
